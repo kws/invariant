@@ -55,10 +55,10 @@ The font discovery system follows a two-tier discovery model:
 
 Fonts are discovered in the following priority order:
 
-1. **System Fonts** (highest priority): Platform-specific system directories
-2. **Font Packs** (lowest priority): Font packages via EntryPoints (supports both first-party application fonts and third-party font packages)
+1. **Font Packs** (Highest Priority): Explicitly registered fonts (first-party or dependencies) via EntryPoints
+2. **System Fonts** (Lowest Priority): Fallback to locally installed fonts in platform-specific directories
 
-This ordering ensures system fonts take precedence, while allowing applications to register their own fonts as font packs and extend with additional third-party font packs.
+*Rationale: Ensures application consistency (branding/layout) regardless of the user's local environment. Font Packs represent bundled/application intent - if a developer explicitly adds a font pack, they want that specific version of the font. System fonts serve as the fallback.*
 
 ## 3. System Font Discovery
 
@@ -83,7 +83,8 @@ System font discovery is platform-specific, requiring different directory paths 
     Path.home() / ".fonts",                          # Legacy user fonts
     Path("/usr/share/fonts"),                        # System fonts
     Path("/usr/local/share/fonts"),                 # Local system fonts
-    Path.home() / ".local" / "share" / "fonts",     # User fonts (XDG)
+    Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "fonts",  # User fonts (XDG Base Directory)
+    Path("/run/host/fonts"),                         # Flatpak/Snap sandbox fonts
 ]
 ```
 
@@ -268,15 +269,13 @@ Font metadata (family name, weight, style) must be extracted from font files to 
 
 ### 5.1 Font Parsing Libraries
 
-**Primary**: `fonttools` (if available)
+**Required**: `fonttools`
 - Comprehensive font metadata extraction
 - Supports TTF, OTF, TTC, WOFF, WOFF2
 - Access to OpenType tables (name, OS/2, head)
+- **Critical**: Parsing binary font tables is the only reliable way to get family names. Filename heuristics fail ~30% of the time (e.g., "Arial Narrow" is a family, not just "Arial" with a weight).
 
-**Fallback**: `PIL` (Pillow) `ImageFont.truetype()`
-- Basic font metadata via `font.getname()`
-- Less comprehensive but widely available
-- Good fallback for basic use cases
+**Note**: If fonttools is unavailable, the implementation should log a warning and skip the file rather than guessing. Guessing leads to "ghost bugs" where fonts appear with wrong weights or family names.
 
 ### 5.2 FontInfo Data Structure
 
@@ -289,12 +288,14 @@ class FontInfo:
     family: str                   # Font family name
     weight: int | None = None     # Font weight (100-900, None if unknown)
     style: str = "normal"         # "normal" or "italic"
+    width: str | None = None      # Font width/stretch (e.g., "normal", "condensed", "expanded", None if unknown)
+    postscript_name: str | None = None  # PostScript name (e.g., "Roboto-BoldItalic") for native OS APIs
     variant: str | None = None    # e.g., "Regular", "Bold", "Italic", "Bold Italic"
 ```
 
 ### 5.3 Metadata Extraction
 
-#### Using fonttools (Preferred)
+#### Using fonttools (Required)
 
 ```python
 from fonttools.ttLib import TTFont
@@ -308,6 +309,9 @@ def parse_font_file(path: Path) -> FontInfo | None:
         name_table = font.get("name")
         family = name_table.getDebugName(1)  # Family name
         
+        # Extract PostScript name (name ID 6)
+        postscript_name = name_table.getDebugName(6)
+        
         # Extract weight from OS/2 table
         os2 = font.get("OS/2")
         weight = os2.usWeightClass if os2 else None
@@ -317,47 +321,32 @@ def parse_font_file(path: Path) -> FontInfo | None:
         if os2 and os2.fsSelection & 0x01:  # Italic bit
             style = "italic"
         
-        return FontInfo(
-            path=path,
-            family=family,
-            weight=weight,
-            style=style,
-        )
-    except Exception:
-        return None
-```
-
-#### Using PIL (Fallback)
-
-```python
-from PIL import ImageFont
-
-def parse_font_file(path: Path) -> FontInfo | None:
-    """Parse font file using PIL."""
-    try:
-        font = ImageFont.truetype(str(path), size=12)
-        
-        # Extract family name
-        if hasattr(font, "getname"):
-            name = font.getname()
-            family = name[0] if name else path.stem
-        else:
-            family = path.stem
-        
-        # Parse weight/style from filename (heuristic)
-        weight, style = parse_filename(path)
+        # Extract width/stretch from OS/2 table
+        width = None
+        if os2:
+            # Map OS/2 usWidthClass to CSS width values
+            width_map = {
+                1: "ultra-condensed", 2: "extra-condensed", 3: "condensed",
+                4: "semi-condensed", 5: "normal", 6: "semi-expanded",
+                7: "expanded", 8: "extra-expanded", 9: "ultra-expanded"
+            }
+            width = width_map.get(os2.usWidthClass, "normal")
         
         return FontInfo(
             path=path,
             family=family,
             weight=weight,
             style=style,
+            width=width,
+            postscript_name=postscript_name,
         )
     except Exception:
         return None
 ```
 
-### 5.4 Filename-Based Heuristics
+### 5.4 Filename-Based Heuristics (Experimental/Unreliable)
+
+**Warning**: Filename-based parsing is unreliable and should only be used as a last resort when fonttools is unavailable. This method fails ~30% of the time and cannot distinguish between font families and width variants (e.g., "Arial Narrow" vs "Arial" with condensed width).
 
 When font metadata is unavailable, parse weight and style from filename:
 
@@ -396,6 +385,7 @@ The font resolution algorithm matches font requests (family, size, weight, style
 1. **Family Name**: Exact match (case-insensitive)
 2. **Weight**: Closest match (prefer exact, then closest)
 3. **Style**: Exact match (normal vs italic)
+4. **Width/Stretch**: Closest match (prefer exact, then closest)
 
 ### 6.2 Scoring Algorithm
 
@@ -406,8 +396,9 @@ def find_font(
     size: int,
     weight: int | None = None,
     style: str = "normal",
+    width: str | None = None,
 ) -> ImageFont.FreeTypeFont | None:
-    """Find and load a font by family, size, weight, and style."""
+    """Find and load a font by family, size, weight, style, and width."""
     self.discover()
     
     family_lower = family.lower()
@@ -416,23 +407,40 @@ def find_font(
     if not candidates:
         return None
     
-    # Score candidates
+    # Score candidates using CSS-style matching
     best: FontInfo | None = None
     best_score = -1
+    
+    # Width mapping for scoring
+    width_order = ["ultra-condensed", "extra-condensed", "condensed",
+                   "semi-condensed", "normal", "semi-expanded",
+                   "expanded", "extra-expanded", "ultra-expanded"]
     
     for candidate in candidates:
         score = 0
         
-        # Weight matching (closer is better)
+        # Weight matching (closer is better, max 1000 points)
         if weight is not None and candidate.weight is not None:
             weight_diff = abs(candidate.weight - weight)
             score += 1000 - weight_diff  # Prefer closer weights
         elif weight is None or candidate.weight is None:
             score += 500  # Neutral score if weight unspecified
         
-        # Style matching
+        # Style matching (exact match required, 100 points)
         if candidate.style == style:
             score += 100
+        
+        # Width matching (closer is better, max 500 points)
+        if width is not None and candidate.width is not None:
+            try:
+                req_idx = width_order.index(width)
+                cand_idx = width_order.index(candidate.width)
+                width_diff = abs(req_idx - cand_idx)
+                score += 500 - (width_diff * 50)  # Prefer closer widths
+            except ValueError:
+                score += 250  # Unknown width values get neutral score
+        elif width is None or candidate.width is None:
+            score += 250  # Neutral score if width unspecified
         
         if score > best_score:
             best_score = score
@@ -463,12 +471,13 @@ Font discovery and resolution results are cached to improve performance.
 ### 7.1 Discovery Cache
 
 - **Font Registry**: Cache discovered `FontInfo` objects keyed by family name (lowercase)
+- **Priority Handling**: When multiple fonts with the same family name exist, Font Pack fonts override System Font fonts in the cache
 - **Lazy Discovery**: Only discover fonts when `discover()` is called
 - **One-time Discovery**: Mark registry as discovered to avoid repeated scans
 
 ### 7.2 Resolution Cache
 
-- **Font Instance Cache**: Cache loaded `ImageFont` objects keyed by `(family, size, weight, style)`
+- **Font Instance Cache**: Cache loaded `ImageFont` objects keyed by `(family, size, weight, style, width)`
 - **Path Cache**: Cache font file paths for quick lookup
 - **Invalidation**: Remove cache entries if font file becomes unavailable
 
@@ -478,8 +487,41 @@ Font discovery and resolution results are cached to improve performance.
 class FontRegistry:
     def __init__(self) -> None:
         self._fonts: dict[str, list[FontInfo]] = {}  # family -> [FontInfo]
-        self._cache: dict[tuple[str, int, int | None, str], Path] = {}
+        self._font_sources: dict[Path, str] = {}  # path -> "fontpack" | "system"
+        self._cache: dict[tuple[str, int, int | None, str, str | None], Path] = {}
         self._discovered = False
+    
+    def discover(self) -> None:
+        """Discover fonts with priority: Font Packs first, then System Fonts."""
+        if self._discovered:
+            return
+        
+        # Discover Font Packs first (highest priority)
+        font_pack_dirs = get_font_pack_directories()
+        for dir_path in font_pack_dirs:
+            self._scan_directory(dir_path, source="fontpack")
+        
+        # Discover System Fonts second (fallback)
+        system_dirs = get_system_font_directories()
+        for dir_path in system_dirs:
+            self._scan_directory(dir_path, source="system", allow_override=False)
+        
+        self._discovered = True
+    
+    def _scan_directory(self, dir_path: Path, source: str, allow_override: bool = True) -> None:
+        """Scan directory and add fonts, respecting priority."""
+        for font_file in self._find_font_files(dir_path):
+            font_info = parse_font_file(font_file)
+            if font_info:
+                family_lower = font_info.family.lower()
+                
+                # If font pack, always add (may override system fonts)
+                # If system font, only add if not already present from font pack
+                if allow_override or family_lower not in self._fonts:
+                    if family_lower not in self._fonts:
+                        self._fonts[family_lower] = []
+                    self._fonts[family_lower].append(font_info)
+                    self._font_sources[font_info.path] = source
 ```
 
 ## 8. API Design
@@ -493,7 +535,7 @@ class FontRegistry:
     """Registry for discovering and resolving fonts."""
     
     def discover(self) -> None:
-        """Discover fonts from all sources."""
+        """Discover fonts from all sources (Font Packs first, then System Fonts)."""
         ...
     
     def find_font(
@@ -502,6 +544,7 @@ class FontRegistry:
         size: int,
         weight: int | None = None,
         style: str = "normal",
+        width: str | None = None,
     ) -> ImageFont.FreeTypeFont | None:
         """Find and load a font."""
         ...
@@ -515,6 +558,7 @@ class FontRegistry:
         family: str,
         weight: int | None = None,
         style: str = "normal",
+        width: str | None = None,
     ) -> Path | None:
         """Get path to font file."""
         ...
@@ -530,6 +574,8 @@ class FontInfo:
     family: str
     weight: int | None = None
     style: str = "normal"
+    width: str | None = None
+    postscript_name: str | None = None
     variant: str | None = None
 ```
 
@@ -681,10 +727,10 @@ def validate_font(self, path: Path) -> bool:
 
 This design was informed by practical implementations that demonstrated the viability of combining system font discovery with extensible font pack discovery via EntryPoints. The architecture emphasizes:
 
-- **Independence**: Standalone library with no framework dependencies
+- **Independence**: Standalone library with minimal framework dependencies
 - **Extensibility**: EntryPoints mechanism for third-party font packs
 - **Cross-platform**: Unified API across macOS, Linux, and Windows
-- **Minimal Dependencies**: Core functionality with optional enhancements (fonttools)
+- **Required Dependencies**: fonttools (required for reliable font metadata extraction), PIL/Pillow (required for font loading)
 
 ## 12. Example Usage
 
@@ -700,7 +746,7 @@ registry = get_default_registry()
 registry.discover()
 
 # Find a font
-font = registry.find_font("Arial", size=16, weight=700, style="normal")
+font = registry.find_font("Arial", size=16, weight=700, style="normal", width="normal")
 if font:
     # Use font with PIL
     from PIL import Image, ImageDraw
@@ -776,6 +822,7 @@ def get_font_directories():
 **Key Differentiators**:
 - Combines system fonts and pack-based discovery (unified EntryPoints for both first-party and third-party fonts)
 - Python-native with EntryPoints extensibility
-- Minimal dependencies (PIL required, fonttools optional)
+- Required dependencies: fonttools (font metadata), PIL/Pillow (font loading)
+- Font Packs override System Fonts for application consistency
 - Designed for standalone project extraction
 
