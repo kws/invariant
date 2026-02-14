@@ -6,10 +6,12 @@ This document describes the architecture and design for a standalone font discov
 
 ### 1.1 Purpose
 
-The font discovery system provides a unified interface for locating and resolving fonts across two sources:
+The font discovery system provides a unified interface for locating and resolving fonts from multiple sources, all implemented as Font Packs:
 
-1. **System Fonts**: Platform-specific system font directories (macOS, Linux, Windows)
-2. **Font Packs**: Font packages discovered via Python EntryPoints (supports both first-party application fonts and third-party font packages)
+1. **System Font Pack**: Built-in pack exposing platform-specific system font directories (macOS, Linux, Windows)
+2. **User Font Packs**: Font packages discovered via Python EntryPoints (supports both first-party application fonts and third-party font packages)
+
+All font sources implement the same `FontPack` protocol, ensuring a unified and extensible architecture.
 
 ### 1.2 Core Value Proposition
 
@@ -60,11 +62,55 @@ Fonts are discovered in the following priority order:
 
 *Rationale: Ensures application consistency (branding/layout) regardless of the user's local environment. Font Packs represent bundled/application intent - if a developer explicitly adds a font pack, they want that specific version of the font. System fonts serve as the fallback.*
 
-## 3. System Font Discovery
+## 3. System Font Pack
 
-System font discovery is platform-specific, requiring different directory paths for each operating system.
+The System Font Pack is a built-in Font Pack that exposes the host operating system's fonts. It implements the standard `FontPack` protocol (see Section 4) and is automatically registered with priority 0 (lowest priority).
 
-### 3.1 Platform-Specific Directories
+### 3.1 SystemFontPack Implementation
+
+```python
+class SystemFontPack:
+    """
+    A built-in Font Pack that exposes the host OS fonts.
+    This implements the standard Font Pack protocol.
+    """
+    
+    def get_font_directories(self) -> list[Path]:
+        """Returns platform-specific system paths."""
+        system = platform.system()
+        if system == "Darwin":
+            return [
+                Path("/System/Library/Fonts"),      # System fonts
+                Path("/Library/Fonts"),              # System-wide fonts
+                Path.home() / "Library" / "Fonts",  # User fonts
+            ]
+        elif system == "Windows":
+            return [
+                Path(os.environ.get("WINDIR", "C:\\Windows")) / "Fonts",
+                Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "Windows" / "Fonts",
+            ]
+        elif system == "Linux":
+            return [
+                Path.home() / ".fonts",                          # Legacy user fonts
+                Path("/usr/share/fonts"),                        # System fonts
+                Path("/usr/local/share/fonts"),                 # Local system fonts
+                Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "fonts",  # User fonts (XDG Base Directory)
+                Path("/run/host/fonts"),                         # Flatpak/Snap sandbox fonts
+            ]
+        return []
+    
+    def get_priority(self) -> int:
+        """Returns the priority of this pack (0 = lowest)."""
+        return 0
+    
+    def get_name(self) -> str:
+        """Returns the canonical name for this pack (used in blocklist)."""
+        return "system-fonts"
+```
+
+### 3.2 Platform-Specific Directories
+
+The `SystemFontPack.get_font_directories()` method returns platform-specific directories as follows:
 
 #### macOS
 
@@ -123,9 +169,38 @@ Font packs are font packages discovered via Python EntryPoints. This mechanism s
 - **First-party fonts**: Application's own fonts registered via EntryPoint in the application's `pyproject.toml`
 - **Third-party fonts**: Separate font packages installed as dependencies
 
-Both use the same EntryPoints mechanism, providing a unified approach for all non-system fonts.
+All font packs, including the built-in System Font Pack, implement the same `FontPack` protocol, providing a unified approach for all font sources.
 
-### 4.1 EntryPoints Mechanism
+### 4.1 FontPack Protocol
+
+All font sources, including the internal System Font scanner, must implement the `FontPack` protocol. This protocol requires:
+
+```python
+class FontPack(Protocol):
+    """Protocol that all font sources must implement."""
+    
+    def get_font_directories(self) -> list[Path]:
+        """Return list of directories containing font files."""
+        ...
+    
+    def get_priority(self) -> int:
+        """Return priority for this pack (higher = processed first, overrides lower priority).
+        
+        Standard priorities:
+        - User Font Packs: 100
+        - System Font Pack: 0
+        """
+        ...
+    
+    def get_name(self) -> str:
+        """Return canonical name for this pack (used in blocklist).
+        
+        Must be unique and stable. System pack uses "system-fonts".
+        """
+        ...
+```
+
+### 4.2 EntryPoints Mechanism
 
 Font packs register themselves using the EntryPoints mechanism defined in PEP 621 and implemented by `importlib.metadata` (Python 3.8+) or `importlib_metadata` (backport).
 
@@ -133,7 +208,7 @@ Font packs register themselves using the EntryPoints mechanism defined in PEP 62
 
 **Entry Point Format**: Factory function that returns font directory paths
 
-### 4.2 Font Pack Structure
+### 4.3 Font Pack Structure
 
 A font pack (whether first-party or third-party) should define an entry point in its `setup.py` or `pyproject.toml`:
 
@@ -155,7 +230,7 @@ setup(
 "my-font-pack" = "my_font_pack:get_font_directories"
 ```
 
-### 4.3 Font Pack Implementation
+### 4.4 Font Pack Implementation
 
 The entry point factory function returns font directory paths. This works the same way for both first-party and third-party font packs:
 
@@ -223,12 +298,15 @@ def get_font_directories():
     # ]
 ```
 
-### 4.4 Discovery Implementation
+### 4.5 Discovery Implementation
 
 ```python
-def get_font_pack_directories() -> list[Path]:
-    """Get font pack directories from entry points."""
-    dirs: list[Path] = []
+def get_font_pack_directories() -> list[tuple[Path, int, str]]:
+    """Get font pack directories from entry points.
+    
+    Returns list of (directory, priority, name) tuples.
+    """
+    packs: list[tuple[Path, int, str]] = []
     
     try:
         from importlib.metadata import entry_points
@@ -239,28 +317,27 @@ def get_font_pack_directories() -> list[Path]:
             import importlib_metadata
             eps = importlib_metadata.entry_points(group="fontpacks")
         except ImportError:
-            return dirs
+            return packs
     
     for ep in eps:
         try:
             factory = ep.load()
-            result = factory()
+            pack = factory()  # Should return FontPack instance
             
-            # Handle various return types
-            if isinstance(result, (list, tuple)):
-                for item in result:
-                    path = Path(item) if isinstance(item, str) else item
-                    if path.exists():
-                        dirs.append(path)
-            elif isinstance(result, (str, Path)):
-                path = Path(result) if isinstance(result, str) else result
+            # Get directories, priority, and name
+            dirs = pack.get_font_directories()
+            priority = pack.get_priority() if hasattr(pack, 'get_priority') else 100
+            name = pack.get_name() if hasattr(pack, 'get_name') else ep.name
+            
+            for dir_path in dirs:
+                path = Path(dir_path) if isinstance(dir_path, str) else dir_path
                 if path.exists():
-                    dirs.append(path)
+                    packs.append((path, priority, name))
         except Exception:
             # Skip invalid entry points
             continue
     
-    return dirs
+    return packs
 ```
 
 ## 5. Font Metadata Parsing
@@ -742,6 +819,60 @@ class FontRef:
     ) -> ImageFont.FreeTypeFont | None:
         """Resolve this font reference to a PIL ImageFont."""
         ...
+```
+
+### 8.4 Configuration
+
+The font registry supports configuration via constructor arguments and environment variables to enable operational control in various deployment scenarios.
+
+#### Blocklist Support
+
+The blocklist mechanism allows excluding specific font packs from discovery without uninstalling packages. This is essential for:
+
+- **Conflict Resolution**: Ignore conflicting or broken font packs in shared environments
+- **Performance**: Disable large font packs (e.g., Google Fonts) for fast-startup CLI tools
+- **Debugging**: Isolate font sources to identify which pack provides a specific font
+- **Sandboxing**: Block system fonts entirely for pixel-perfect consistency across machines
+
+#### Blocklist Mechanisms
+
+**A. Constructor Argument (Code Control)**
+
+```python
+registry = FontRegistry(
+    blocklist={"system-fonts", "broken-legacy-pack"}
+)
+```
+
+**B. Environment Variable (User/Ops Control)**
+
+```bash
+# Useful for CI/CD or fixing broken user environments
+export FONT_DISCOVERY_BLOCKLIST="system-fonts,broken-pack"
+```
+
+The environment variable is parsed as a comma-separated list and merged with any constructor-provided blocklist.
+
+#### Standard Pack Names
+
+The following pack names are reserved/standardized:
+
+- `"system-fonts"`: The built-in System Font Pack (can be blocked to disable system font discovery)
+
+User-defined font packs use their EntryPoint name as the pack identifier. Pack names are case-sensitive.
+
+#### Example Usage
+
+```python
+# Disable system fonts for sandboxed environment
+registry = FontRegistry(blocklist={"system-fonts"})
+
+# Disable specific third-party pack
+registry = FontRegistry(blocklist={"google-fonts"})
+
+# Combine with environment variable
+# FONT_DISCOVERY_BLOCKLIST="system-fonts" python app.py
+registry = FontRegistry(blocklist={"broken-pack"})  # Both are blocked
 ```
 
 ## 9. Best Practices
