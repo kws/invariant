@@ -2,15 +2,14 @@
 
 ## 1. Overview
 
-This document describes the architecture and design for a standalone font discovery system that combines platform-specific system font detection with bundled font discovery and extensible font pack discovery via Python EntryPoints.
+This document describes the architecture and design for a standalone font discovery system that combines platform-specific system font detection with extensible font pack discovery via Python EntryPoints.
 
 ### 1.1 Purpose
 
-The font discovery system provides a unified interface for locating and resolving fonts across three sources:
+The font discovery system provides a unified interface for locating and resolving fonts across two sources:
 
 1. **System Fonts**: Platform-specific system font directories (macOS, Linux, Windows)
-2. **Bundled Fonts**: Application-local font directories
-3. **Font Packs**: Third-party font packages discovered via Python EntryPoints
+2. **Font Packs**: Font packages discovered via Python EntryPoints (supports both first-party application fonts and third-party font packages)
 
 ### 1.2 Core Value Proposition
 
@@ -28,7 +27,7 @@ The font discovery system provides a unified interface for locating and resolvin
 
 ## 2. Architecture Overview
 
-The font discovery system follows a three-tier discovery model:
+The font discovery system follows a two-tier discovery model:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -39,17 +38,17 @@ The font discovery system follows a three-tier discovery model:
         ┌───────────────┼───────────────┐
         │               │               │
         ▼               ▼               ▼
-┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-│ System Fonts │ │Bundled Fonts │ │ Font Packs   │
-│  Discovery   │ │  Discovery   │ │  Discovery   │
-└──────────────┘ └──────────────┘ └──────────────┘
-        │               │               │
-        ▼               ▼               ▼
-┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-│ Platform-    │ │ importlib.   │ │ EntryPoints  │
-│ specific     │ │ resources    │ │ mechanism    │
-│ paths        │ │              │ │              │
-└──────────────┘ └──────────────┘ └──────────────┘
+┌──────────────┐ ┌──────────────┐
+│ System Fonts │ │ Font Packs   │
+│  Discovery   │ │  Discovery   │
+└──────────────┘ └──────────────┘
+        │               │
+        ▼               ▼
+┌──────────────┐ ┌──────────────┐
+│ Platform-    │ │ EntryPoints  │
+│ specific     │ │ mechanism    │
+│ paths        │ │              │
+└──────────────┘ └──────────────┘
 ```
 
 ### 2.1 Discovery Order
@@ -57,10 +56,9 @@ The font discovery system follows a three-tier discovery model:
 Fonts are discovered in the following priority order:
 
 1. **System Fonts** (highest priority): Platform-specific system directories
-2. **Bundled Fonts**: Application-local font directory
-3. **Font Packs** (lowest priority): Third-party packages via EntryPoints
+2. **Font Packs** (lowest priority): Font packages via EntryPoints (supports both first-party application fonts and third-party font packages)
 
-This ordering ensures system fonts take precedence, while allowing applications to bundle fonts and extend with additional font packs.
+This ordering ensures system fonts take precedence, while allowing applications to register their own fonts as font packs and extend with additional third-party font packs.
 
 ## 3. System Font Discovery
 
@@ -117,69 +115,16 @@ Font files are discovered by recursively scanning directories for common font fi
 - **Performance**: Use lazy discovery - only scan directories when `discover()` is called
 - **Caching**: Cache discovered fonts in memory to avoid repeated filesystem scans
 
-## 4. Bundled Font Discovery
+## 4. Font Pack Discovery
 
-Bundled fonts are application-local fonts that ship with the application or library.
+Font packs are font packages discovered via Python EntryPoints. This mechanism supports both:
 
-### 4.1 Discovery Mechanism
+- **First-party fonts**: Application's own fonts registered via EntryPoint in the application's `pyproject.toml`
+- **Third-party fonts**: Separate font packages installed as dependencies
 
-Bundled fonts are discovered using Python's `importlib.resources` (Python 3.7+) or `importlib_resources` (backport for older Python versions).
+Both use the same EntryPoints mechanism, providing a unified approach for all non-system fonts.
 
-**Preferred Approach**: Use `importlib.resources` for modern Python (3.9+):
-
-```python
-from importlib.resources import files
-
-def get_bundled_fonts():
-    """Discover bundled fonts using importlib.resources."""
-    try:
-        package = files("myapp.fonts")  # Package containing fonts/
-        for font_file in package.iterdir():
-            if font_file.suffix.lower() in {".ttf", ".otf", ".ttc"}:
-                yield font_file
-    except (ImportError, ModuleNotFoundError):
-        pass
-```
-
-### 4.2 Directory Structure
-
-Bundled fonts should be organized in a `fonts/` directory within the package:
-
-```
-myapp/
-├── __init__.py
-├── fonts/
-│   ├── __init__.py
-│   ├── Regular.ttf
-│   ├── Bold.ttf
-│   └── Italic.ttf
-└── ...
-```
-
-### 4.3 Fallback Discovery
-
-If `importlib.resources` is unavailable, fall back to filesystem-based discovery relative to the package location:
-
-```python
-def get_bundled_font_directory() -> Path | None:
-    """Get bundled fonts directory via filesystem fallback."""
-    try:
-        import myapp
-        if hasattr(myapp, "__file__") and myapp.__file__:
-            package_root = Path(myapp.__file__).parent
-            fonts_dir = package_root / "fonts"
-            if fonts_dir.exists():
-                return fonts_dir
-    except ImportError:
-        pass
-    return None
-```
-
-## 5. Font Pack Discovery
-
-Font packs are third-party packages that provide additional fonts via Python EntryPoints.
-
-### 5.1 EntryPoints Mechanism
+### 4.1 EntryPoints Mechanism
 
 Font packs register themselves using the EntryPoints mechanism defined in PEP 621 and implemented by `importlib.metadata` (Python 3.8+) or `importlib_metadata` (backport).
 
@@ -187,9 +132,9 @@ Font packs register themselves using the EntryPoints mechanism defined in PEP 62
 
 **Entry Point Format**: Factory function that returns font directory paths
 
-### 5.2 Font Pack Structure
+### 4.2 Font Pack Structure
 
-A font pack package should define an entry point in its `setup.py` or `pyproject.toml`:
+A font pack (whether first-party or third-party) should define an entry point in its `setup.py` or `pyproject.toml`:
 
 **setup.py**:
 ```python
@@ -209,9 +154,24 @@ setup(
 "my-font-pack" = "my_font_pack:get_font_directories"
 ```
 
-### 5.3 Font Pack Implementation
+### 4.3 Font Pack Implementation
 
-The entry point factory function returns font directory paths:
+The entry point factory function returns font directory paths. This works the same way for both first-party and third-party font packs:
+
+**Example: First-party font pack (application's own fonts)**
+
+```python
+# myapp/__init__.py or myapp/fonts.py
+from pathlib import Path
+from importlib.resources import files
+
+def get_font_directories():
+    """Entry point factory for application's bundled fonts."""
+    package = files("myapp.fonts")
+    return [Path(str(package))]
+```
+
+**Example: Third-party font pack (separate package)**
 
 ```python
 # my_font_pack/__init__.py
@@ -234,7 +194,35 @@ def get_font_directories():
     # ]
 ```
 
-### 5.4 Discovery Implementation
+**Example: Application registering its own fonts in pyproject.toml**
+
+```toml
+[project.entry-points."fontpacks"]
+"myapp-fonts" = "myapp:get_font_directories"
+```
+
+```python
+# my_font_pack/__init__.py
+from pathlib import Path
+from importlib.resources import files
+
+def get_font_directories():
+    """Entry point factory returning font directory paths."""
+    # Option 1: Return Path objects
+    package = files("my_font_pack.fonts")
+    return [Path(str(package))]
+    
+    # Option 2: Return string paths
+    # return [str(Path(__file__).parent / "fonts")]
+    
+    # Option 3: Return multiple directories
+    # return [
+    #     Path(str(files("my_font_pack.fonts"))),
+    #     Path.home() / ".my_font_pack" / "fonts",
+    # ]
+```
+
+### 4.4 Discovery Implementation
 
 ```python
 def get_font_pack_directories() -> list[Path]:
@@ -274,11 +262,11 @@ def get_font_pack_directories() -> list[Path]:
     return dirs
 ```
 
-## 6. Font Metadata Parsing
+## 5. Font Metadata Parsing
 
 Font metadata (family name, weight, style) must be extracted from font files to enable intelligent matching.
 
-### 6.1 Font Parsing Libraries
+### 5.1 Font Parsing Libraries
 
 **Primary**: `fonttools` (if available)
 - Comprehensive font metadata extraction
@@ -290,7 +278,7 @@ Font metadata (family name, weight, style) must be extracted from font files to 
 - Less comprehensive but widely available
 - Good fallback for basic use cases
 
-### 6.2 FontInfo Data Structure
+### 5.2 FontInfo Data Structure
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -304,7 +292,7 @@ class FontInfo:
     variant: str | None = None    # e.g., "Regular", "Bold", "Italic", "Bold Italic"
 ```
 
-### 6.3 Metadata Extraction
+### 5.3 Metadata Extraction
 
 #### Using fonttools (Preferred)
 
@@ -369,7 +357,7 @@ def parse_font_file(path: Path) -> FontInfo | None:
         return None
 ```
 
-### 6.4 Filename-Based Heuristics
+### 5.4 Filename-Based Heuristics
 
 When font metadata is unavailable, parse weight and style from filename:
 
@@ -399,17 +387,17 @@ def parse_filename(path: Path) -> tuple[int | None, str]:
     return weight, style
 ```
 
-## 7. Font Resolution Algorithm
+## 6. Font Resolution Algorithm
 
 The font resolution algorithm matches font requests (family, size, weight, style) to discovered fonts using a scoring system.
 
-### 7.1 Matching Criteria
+### 6.1 Matching Criteria
 
 1. **Family Name**: Exact match (case-insensitive)
 2. **Weight**: Closest match (prefer exact, then closest)
 3. **Style**: Exact match (normal vs italic)
 
-### 7.2 Scoring Algorithm
+### 6.2 Scoring Algorithm
 
 ```python
 def find_font(
@@ -460,7 +448,7 @@ def find_font(
         return None
 ```
 
-### 7.3 Fallback Strategy
+### 6.3 Fallback Strategy
 
 If no exact match is found:
 
@@ -468,23 +456,23 @@ If no exact match is found:
 2. **System Fallback**: Use platform default font (implementation-dependent)
 3. **Error**: Return `None` if no font can be resolved
 
-## 8. Caching Strategy
+## 7. Caching Strategy
 
 Font discovery and resolution results are cached to improve performance.
 
-### 8.1 Discovery Cache
+### 7.1 Discovery Cache
 
 - **Font Registry**: Cache discovered `FontInfo` objects keyed by family name (lowercase)
 - **Lazy Discovery**: Only discover fonts when `discover()` is called
 - **One-time Discovery**: Mark registry as discovered to avoid repeated scans
 
-### 8.2 Resolution Cache
+### 7.2 Resolution Cache
 
 - **Font Instance Cache**: Cache loaded `ImageFont` objects keyed by `(family, size, weight, style)`
 - **Path Cache**: Cache font file paths for quick lookup
 - **Invalidation**: Remove cache entries if font file becomes unavailable
 
-### 8.3 Cache Implementation
+### 7.3 Cache Implementation
 
 ```python
 class FontRegistry:
@@ -494,9 +482,9 @@ class FontRegistry:
         self._discovered = False
 ```
 
-## 9. API Design
+## 8. API Design
 
-### 9.1 Core Classes
+### 8.1 Core Classes
 
 #### FontRegistry
 
@@ -545,7 +533,7 @@ class FontInfo:
     variant: str | None = None
 ```
 
-### 9.2 Factory Functions
+### 8.2 Factory Functions
 
 ```python
 def get_default_registry() -> FontRegistry:
@@ -561,7 +549,7 @@ def get_font_pack_directories() -> list[Path]:
     ...
 ```
 
-### 9.3 Font Reference (Optional)
+### 8.3 Font Reference (Optional)
 
 For applications that need to serialize font references:
 
@@ -582,9 +570,9 @@ class FontRef:
         ...
 ```
 
-## 10. Best Practices
+## 9. Best Practices
 
-### 10.1 Lessons from Existing Solutions
+### 9.1 Lessons from Existing Solutions
 
 **fontlib**:
 - Uses EntryPoints for extensibility
@@ -601,7 +589,7 @@ class FontRef:
 - Proper font metadata extraction
 - Support for variable fonts
 
-### 10.2 Implementation Recommendations
+### 9.2 Implementation Recommendations
 
 1. **Lazy Discovery**: Only discover fonts when needed
 2. **Error Handling**: Gracefully handle missing fonts, permission errors, and invalid font files
@@ -610,16 +598,16 @@ class FontRef:
 5. **Platform Abstraction**: Hide platform-specific details behind unified API
 6. **Metadata Priority**: Prefer font file metadata over filename heuristics
 
-### 10.3 Performance Considerations
+### 9.3 Performance Considerations
 
 - **One-time Discovery**: Scan filesystem only once per registry instance
 - **Lazy Loading**: Load font files only when `find_font()` is called
 - **Cache Management**: Use appropriate cache sizes and invalidation strategies
 - **Parallel Discovery**: Consider parallel directory scanning for large font collections
 
-## 11. Future Considerations
+## 10. Future Considerations
 
-### 11.1 Locale-Aware Selection
+### 10.1 Locale-Aware Selection
 
 Support locale-based font selection for internationalization:
 
@@ -639,7 +627,7 @@ def find_font_for_locale(
     ...
 ```
 
-### 11.2 Font Fallback Chains
+### 10.2 Font Fallback Chains
 
 Implement CSS-like font fallback chains:
 
@@ -659,7 +647,7 @@ def find_font_with_fallback(
     return None
 ```
 
-### 11.3 Variable Fonts
+### 10.3 Variable Fonts
 
 Support variable fonts (OpenType Variable Fonts) with custom axis values:
 
@@ -676,7 +664,7 @@ def find_variable_font(
     ...
 ```
 
-### 11.4 Font Validation
+### 10.4 Font Validation
 
 Add font validation and integrity checks:
 
@@ -689,7 +677,7 @@ def validate_font(self, path: Path) -> bool:
     ...
 ```
 
-## 12. Design Origins
+## 11. Design Origins
 
 This design was informed by practical implementations that demonstrated the viability of combining system font discovery with extensible font pack discovery via EntryPoints. The architecture emphasizes:
 
@@ -698,9 +686,9 @@ This design was informed by practical implementations that demonstrated the viab
 - **Cross-platform**: Unified API across macOS, Linux, and Windows
 - **Minimal Dependencies**: Core functionality with optional enhancements (fonttools)
 
-## 13. Example Usage
+## 12. Example Usage
 
-### 13.1 Basic Usage
+### 12.1 Basic Usage
 
 ```python
 from fontdiscovery import FontRegistry, get_default_registry
@@ -721,7 +709,7 @@ if font:
     draw.text((10, 10), "Hello", font=font, fill="black")
 ```
 
-### 13.2 Custom Registry
+### 12.2 Custom Registry
 
 ```python
 from fontdiscovery import FontRegistry
@@ -738,7 +726,26 @@ custom_fonts = Path.home() / "custom_fonts"
 font = registry.find_font("CustomFont", size=12)
 ```
 
-### 13.3 Font Pack Implementation
+### 12.3 Font Pack Implementation
+
+**First-party font pack (application's own fonts):**
+
+```python
+# myapp/fonts.py
+from pathlib import Path
+from importlib.resources import files
+
+def get_font_directories():
+    """Entry point factory for application's bundled fonts."""
+    package = files("myapp.fonts")
+    return [Path(str(package))]
+
+# pyproject.toml
+# [project.entry-points."fontpacks"]
+# "myapp-fonts" = "myapp.fonts:get_font_directories"
+```
+
+**Third-party font pack (separate package):**
 
 ```python
 # my_font_pack/__init__.py
@@ -750,25 +757,24 @@ def get_font_directories():
     package = files("my_font_pack.fonts")
     return [Path(str(package))]
 
-# setup.py or pyproject.toml
+# pyproject.toml
 # [project.entry-points."fontpacks"]
 # "my-font-pack" = "my_font_pack:get_font_directories"
 ```
 
-## 14. Comparison with Existing Solutions
+## 13. Comparison with Existing Solutions
 
 | Feature | This Design | fontlib | system-fonts | font-kit |
 |---------|-------------|---------|--------------|----------|
 | System Fonts | ✅ | ✅ | ✅ | ✅ |
-| Bundled Fonts | ✅ | ✅ | ❌ | ❌ |
-| EntryPoints | ✅ | ✅ | ❌ | ❌ |
+| Font Packs (EntryPoints) | ✅ | ✅ | ❌ | ❌ |
 | Cross-platform | ✅ | ✅ | ✅ | ✅ |
 | Locale-aware | 🔄 Future | ❌ | ✅ | ❌ |
 | Variable Fonts | 🔄 Future | ❌ | ❌ | ✅ |
 | Language | Python | Python | Rust | Rust |
 
 **Key Differentiators**:
-- Combines system, bundled, and pack-based discovery
+- Combines system fonts and pack-based discovery (unified EntryPoints for both first-party and third-party fonts)
 - Python-native with EntryPoints extensibility
 - Minimal dependencies (PIL required, fonttools optional)
 - Designed for standalone project extraction
