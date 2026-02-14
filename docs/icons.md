@@ -21,6 +21,7 @@ The system is designed to be generic enough to support multiple resource types w
 - **Icon-Focused**: Specialized support for SVG icon libraries (Lucide, Feather, Material Design Icons, etc.)
 - **Prefix-Based Resolution**: Namespace disambiguation via `pack:name` format
 - **Efficient**: Lazy loading with caching support
+- **Discovery Focus**: This library discovers and retrieves resources. How those resources are used (rendered, cached, transformed) is the responsibility of the consuming application.
 
 ### 1.3 Influences & Similar Systems
 
@@ -82,11 +83,11 @@ class ResourceProvider(Protocol):
     (SVG icons, images, etc.) to the resource registry.
     """
     
-    def get_resource(self, key: object) -> str | bytes:
-        """Get resource content for a key.
+    def get_resource(self, descriptor: object) -> str | bytes:
+        """Get resource content for a descriptor.
         
         Args:
-            key: A resource key object (pack-specific or generic)
+            descriptor: A resource descriptor object (pack-specific or generic)
             
         Returns:
             Resource content as string (for text-based like SVG) or bytes (for binary)
@@ -104,11 +105,11 @@ class ResourceProvider(Protocol):
         """
         ...
     
-    def get_metadata(self, key: object) -> dict[str, Any] | None:
+    def get_metadata(self, descriptor: object) -> dict[str, Any] | None:
         """Get metadata for a resource.
         
         Args:
-            key: A resource key object
+            descriptor: A resource descriptor object
             
         Returns:
             Dictionary of metadata (name, dimensions, variants, etc.) or None
@@ -124,8 +125,8 @@ For icon-specific use cases, a more specialized protocol can be defined:
 class IconProvider(ResourceProvider, Protocol):
     """Protocol for SVG icon providers."""
     
-    def get_svg(self, key: object) -> str:
-        """Get SVG content for an icon key.
+    def get_svg(self, descriptor: object) -> str:
+        """Get SVG content for an icon descriptor.
         
         This is a convenience method that calls get_resource() and
         ensures the result is a string (SVG content).
@@ -229,11 +230,11 @@ class ResourceRegistry:
                 
                 # Handle various return types
                 if isinstance(result, tuple) and len(result) >= 2:
-                    key_type, provider = result[0], result[1]
+                    descriptor_type, provider = result[0], result[1]
                     prefixes = result[2] if len(result) > 2 else None
-                    self.register(key_type, provider, prefixes)
+                    self.register(descriptor_type, provider, prefixes)
                 elif isinstance(result, ResourceProvider):
-                    # Generic provider without key type
+                    # Generic provider without descriptor type
                     self.register_generic(ep.name, result)
             except Exception as e:
                 import warnings
@@ -247,41 +248,41 @@ class ResourceRegistry:
 
 SVG icons are the primary use case, with specialized support for icon libraries.
 
-### 5.1 Icon Key Types
+### 5.1 Icon Descriptor Types
 
-Icon keys represent requests for specific icons. They can be:
+Icon descriptors represent requests for specific icons. They can be:
 
-1. **Pack-Specific Keys**: Type-safe keys for specific icon packs (e.g., `LucideIconKey`)
-2. **Generic Keys**: Generic keys that resolve via prefix (e.g., `SvgIconKey` with `ref="lucide:lightbulb"`)
+1. **Pack-Specific Descriptors**: Type-safe descriptors for specific icon packs (e.g., `LucideIconDescriptor`)
+2. **Generic Descriptors**: Generic descriptors that resolve via prefix (e.g., `SvgIconDescriptor` with `ref="lucide:lightbulb"`)
 
-#### Pack-Specific Key Example
+#### Pack-Specific Descriptor Example
 
 ```python
 @dataclass(frozen=True, slots=True, kw_only=True)
-class LucideIconKey:
-    """Lucide icon key."""
+class LucideIconDescriptor:
+    """Lucide icon descriptor."""
     
     pack_id: str = "lucide"
     pack_version: str = "v1"
     name: str  # e.g., "lightbulb"
-    w: int | float  # Width
-    h: int | float  # Height
-    tint: str | None = None
-    stroke_width: float | None = None
+    w: int | float  # Width (hint for transformations, not rendering instruction)
+    h: int | float  # Height (hint for transformations, not rendering instruction)
+    tint: str | None = None  # Optional SVG string transformation hint
+    stroke_width: float | None = None  # Optional SVG string transformation hint
     variant: str | None = None
 ```
 
-#### Generic Key Example
+#### Generic Descriptor Example
 
 ```python
 @dataclass(frozen=True, slots=True, kw_only=True)
-class SvgIconKey:
-    """Generic SVG icon key with prefix-based resolution."""
+class SvgIconDescriptor:
+    """Generic SVG icon descriptor with prefix-based resolution."""
     
     ref: str  # "pack:name" or direct reference
-    w: int | float
-    h: int | float
-    tint: str | None = None
+    w: int | float  # Width (hint for transformations, not rendering instruction)
+    h: int | float  # Height (hint for transformations, not rendering instruction)
+    tint: str | None = None  # Optional SVG string transformation hint
     variant: str | None = None
     
     def resolve_ref(self) -> tuple[str, str] | None:
@@ -300,29 +301,29 @@ Icons can be referenced using a `pack:name` format for namespace disambiguation:
 - `feather:home` - Feather icon named "home"
 - `material:settings` - Material Design icon named "settings"
 
-The registry resolves prefixes to pack-specific key types:
+The registry resolves prefixes to pack-specific descriptor types:
 
 ```python
-def resolve_icon_key(key: SvgIconKey) -> Any:
-    """Resolve a generic SvgIconKey to a pack-specific icon key."""
-    resolved = key.resolve_ref()
+def resolve_icon_descriptor(descriptor: SvgIconDescriptor) -> Any:
+    """Resolve a generic SvgIconDescriptor to a pack-specific icon descriptor."""
+    resolved = descriptor.resolve_ref()
     if not resolved:
-        return key  # No prefix, return as-is
+        return descriptor  # No prefix, return as-is
     
     prefix, name = resolved
     registry = get_default_registry()
-    key_type = registry.resolve_prefix(prefix)
+    descriptor_type = registry.resolve_prefix(prefix)
     
-    if key_type is None:
-        return key  # Unknown prefix
+    if descriptor_type is None:
+        return descriptor  # Unknown prefix
     
-    # Create pack-specific key
-    return key_type(
+    # Create pack-specific descriptor
+    return descriptor_type(
         name=name,
-        w=key.w,
-        h=key.h,
-        tint=key.tint,
-        variant=key.variant,
+        w=descriptor.w,
+        h=descriptor.h,
+        tint=descriptor.tint,
+        variant=descriptor.variant,
     )
 ```
 
@@ -331,13 +332,13 @@ def resolve_icon_key(key: SvgIconKey) -> Any:
 Example implementation for Lucide icons:
 
 ```python
-class LucideRenderer(ResourceProvider):
-    """Renderer for Lucide icons."""
+class LucideProvider(ResourceProvider):
+    """Provider for Lucide icons."""
     
-    def get_resource(self, key: object) -> str:
-        """Get SVG content for a Lucide icon key."""
-        if not isinstance(key, LucideIconKey):
-            raise ValueError(f"Expected LucideIconKey, got {type(key)}")
+    def get_resource(self, descriptor: object) -> str:
+        """Get SVG content for a Lucide icon descriptor."""
+        if not isinstance(descriptor, LucideIconDescriptor):
+            raise ValueError(f"Expected LucideIconDescriptor, got {type(descriptor)}")
         
         try:
             from lucide import lucide_icon
@@ -345,25 +346,29 @@ class LucideRenderer(ResourceProvider):
             raise ValueError("python-lucide package not installed")
         
         # Get the icon SVG
-        svg_content = lucide_icon(key.name)
+        svg_content = lucide_icon(descriptor.name)
         if not svg_content:
-            raise ValueError(f"Lucide icon '{key.name}' not found")
+            raise ValueError(f"Lucide icon '{descriptor.name}' not found")
         
-        # Apply transformations (tint, stroke width, etc.)
-        svg_content = self._apply_transformations(svg_content, key)
+        # Apply optional SVG string transformations (tint, stroke width, etc.)
+        svg_content = self._apply_transformations(svg_content, descriptor)
         
         return svg_content
     
-    def _apply_transformations(self, svg: str, key: LucideIconKey) -> str:
-        """Apply transformations to SVG content."""
-        # Apply tinting
-        if key.tint:
-            svg = svg.replace('stroke="currentColor"', f'stroke="{key.tint}"')
-            svg = svg.replace('fill="currentColor"', f'fill="{key.tint}"')
+    def _apply_transformations(self, svg: str, descriptor: LucideIconDescriptor) -> str:
+        """Apply optional transformations to SVG string content.
         
-        # Apply stroke width
-        if key.stroke_width is not None:
-            svg = svg.replace('stroke-width="2"', f'stroke-width="{key.stroke_width}"')
+        Transformations modify the SVG string itself before returning it.
+        These are NOT rendering instructions - they change the SVG content.
+        """
+        # Apply tinting (replace currentColor with specific color)
+        if descriptor.tint:
+            svg = svg.replace('stroke="currentColor"', f'stroke="{descriptor.tint}"')
+            svg = svg.replace('fill="currentColor"', f'fill="{descriptor.tint}"')
+        
+        # Apply stroke width (modify stroke-width attribute)
+        if descriptor.stroke_width is not None:
+            svg = svg.replace('stroke-width="2"', f'stroke-width="{descriptor.stroke_width}"')
         
         return svg
     
@@ -375,18 +380,18 @@ class LucideRenderer(ResourceProvider):
         except ImportError:
             pass
     
-    def get_metadata(self, key: object) -> dict[str, Any] | None:
+    def get_metadata(self, descriptor: object) -> dict[str, Any] | None:
         """Get metadata for a Lucide icon."""
-        if not isinstance(key, LucideIconKey):
+        if not isinstance(descriptor, LucideIconDescriptor):
             return None
         
         return {
             "pack": "lucide",
-            "name": key.name,
-            "width": key.w,
-            "height": key.h,
-            "tint": key.tint,
-            "stroke_width": key.stroke_width,
+            "name": descriptor.name,
+            "width_hint": descriptor.w,
+            "height_hint": descriptor.h,
+            "tint": descriptor.tint,
+            "stroke_width": descriptor.stroke_width,
         }
 ```
 
@@ -432,52 +437,52 @@ class ResourceRegistry:
     
     def register(
         self,
-        key_type: Type[Any],
+        descriptor_type: Type[Any],
         provider: ResourceProvider,
         prefixes: list[str] | None = None,
     ) -> None:
-        """Register a resource provider for a key type.
+        """Register a resource provider for a descriptor type.
         
         Args:
-            key_type: The resource key class (e.g., LucideIconKey)
+            descriptor_type: The resource descriptor class (e.g., LucideIconDescriptor)
             provider: The provider instance
             prefixes: Optional list of prefixes (e.g., ["lucide"]) for string-based resolution
         """
-        self._providers[key_type] = provider
+        self._providers[descriptor_type] = provider
         if prefixes:
             for prefix in prefixes:
-                self._prefixes[prefix.lower()] = key_type
+                self._prefixes[prefix.lower()] = descriptor_type
     
-    def get_provider(self, key: object) -> ResourceProvider | None:
-        """Get the provider for a resource key.
+    def get_provider(self, descriptor: object) -> ResourceProvider | None:
+        """Get the provider for a resource descriptor.
         
         Args:
-            key: The resource key object
+            descriptor: The resource descriptor object
             
         Returns:
             The provider instance, or None if not found
         """
         self._load_entry_points()
-        key_type = type(key)
-        return self._providers.get(key_type)
+        descriptor_type = type(descriptor)
+        return self._providers.get(descriptor_type)
     
     def resolve_prefix(self, prefix: str) -> Type[Any] | None:
-        """Resolve a prefix to a resource key type.
+        """Resolve a prefix to a resource descriptor type.
         
         Args:
             prefix: The prefix (e.g., "lucide")
             
         Returns:
-            The resource key type, or None if not found
+            The resource descriptor type, or None if not found
         """
         self._load_entry_points()
         return self._prefixes.get(prefix.lower())
     
-    def get_resource(self, key: object) -> str | bytes:
-        """Get resource content for a key.
+    def get_resource(self, descriptor: object) -> str | bytes:
+        """Get resource content for a descriptor.
         
         Args:
-            key: A resource key object
+            descriptor: A resource descriptor object
             
         Returns:
             Resource content as string or bytes
@@ -485,11 +490,11 @@ class ResourceRegistry:
         Raises:
             ValueError: If the resource cannot be found
         """
-        provider = self.get_provider(key)
+        provider = self.get_provider(descriptor)
         if provider is None:
-            raise ValueError(f"No provider found for key type: {type(key)}")
+            raise ValueError(f"No provider found for descriptor type: {type(descriptor)}")
         
-        return provider.get_resource(key)
+        return provider.get_resource(descriptor)
 ```
 
 ### 6.2 Factory Functions
@@ -505,13 +510,13 @@ def get_default_registry() -> ResourceRegistry:
     return _default_registry
 
 def register_resource_provider(
-    key_type: Type[Any],
+    descriptor_type: Type[Any],
     provider: ResourceProvider,
     prefixes: list[str] | None = None,
 ) -> None:
     """Register a resource provider (convenience function)."""
     registry = get_default_registry()
-    registry.register(key_type, provider, prefixes)
+    registry.register(descriptor_type, provider, prefixes)
 ```
 
 ## 7. Metadata and Versioning
@@ -566,15 +571,15 @@ The system is designed to be extensible to new resource types and formats.
 
 To add support for a new resource type (e.g., raster images):
 
-1. **Define Resource Key Type**:
+1. **Define Resource Descriptor Type**:
 ```python
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ImageResourceKey:
-    """Key for raster image resources."""
+class ImageResourceDescriptor:
+    """Descriptor for raster image resources."""
     pack: str
     name: str
     format: str  # "png", "jpg", "webp"
-    target_size: tuple[int, int] | None = None
+    target_size: tuple[int, int] | None = None  # Optional hint for transformations
 ```
 
 2. **Implement Resource Provider**:
@@ -582,17 +587,17 @@ class ImageResourceKey:
 class ImageResourceProvider(ResourceProvider):
     """Provider for raster image resources."""
     
-    def get_resource(self, key: object) -> bytes:
+    def get_resource(self, descriptor: object) -> bytes:
         """Get image bytes."""
-        if not isinstance(key, ImageResourceKey):
-            raise ValueError(f"Expected ImageResourceKey, got {type(key)}")
+        if not isinstance(descriptor, ImageResourceDescriptor):
+            raise ValueError(f"Expected ImageResourceDescriptor, got {type(descriptor)}")
         
         # Load image from pack
-        image_path = self._get_image_path(key)
+        image_path = self._get_image_path(descriptor)
         with open(image_path, "rb") as f:
             return f.read()
     
-    def get_metadata(self, key: object) -> dict[str, Any] | None:
+    def get_metadata(self, descriptor: object) -> dict[str, Any] | None:
         """Get image metadata."""
         # Return dimensions, format, etc.
         ...
@@ -600,7 +605,7 @@ class ImageResourceProvider(ResourceProvider):
 
 3. **Register Provider**:
 ```python
-registry.register(ImageResourceKey, ImageResourceProvider(), ["img", "image"])
+registry.register(ImageResourceDescriptor, ImageResourceProvider(), ["img", "image"])
 ```
 
 ### 8.2 Adding New Formats
@@ -662,7 +667,7 @@ New formats can be added by:
 2. **Caching**: Cache resource content and metadata
 3. **Error Handling**: Gracefully handle missing resources and invalid packs
 4. **Extensibility**: Use protocols and EntryPoints for extensibility
-5. **Type Safety**: Provide type-safe key classes for pack-specific resources
+5. **Type Safety**: Provide type-safe descriptor classes for pack-specific resources
 6. **Prefix Resolution**: Support both type-safe and string-based resource references
 
 ### 9.3 Performance Considerations
@@ -691,74 +696,68 @@ New formats can be added by:
 
 ## 10. SVG Icon Specifics
 
-### 10.1 SVG Transformation
+### 10.1 SVG String Transformations
 
-SVG icons often need transformation before use:
+**Important**: Transformations are optional SVG string modifications that change the SVG content itself before returning it. They are NOT rendering instructions. The library returns modified SVG strings; how those strings are rendered is the responsibility of the consuming application.
 
-- **Tinting**: Replace `currentColor` or specific colors
-- **Sizing**: Adjust viewBox and dimensions
-- **Stroke Width**: Modify stroke-width attribute
-- **Rotation**: Apply transform attribute
-- **Opacity**: Adjust opacity or fill-opacity
+Supported transformation types (all modify the SVG string content):
 
-### 10.2 SVG Optimization
+- **Tinting**: Replace `currentColor` or specific colors in the SVG string
+  - Example: `stroke="currentColor"` → `stroke="#FF0000"`
+- **Stroke Width**: Modify `stroke-width` attribute in the SVG string
+  - Example: `stroke-width="2"` → `stroke-width="3"`
+- **Other SVG attribute modifications**: As needed (rotation via transform attribute, opacity, etc.)
 
-Consider SVG optimization:
+**Universal Pattern**: All icon packs (Lucide, Feather, Material Design, etc.) follow the same pattern:
+1. **Discovery**: Find the SVG resource (via function call, file lookup, etc.)
+2. **Optional transformations**: Apply SVG string modifications if requested (tint, stroke-width, etc.)
+3. **Return**: SVG string content
+4. **No custom renderer needed**: Rasterization (SVG → PNG/Image) is handled by consuming applications
+
+Transformations are optional - some packs may support them, others may not. The library provides a mechanism for transformations but does not mandate their implementation.
+
+### 10.2 SVG Optimization (Optional)
+
+Some resource packs may choose to optimize SVG content:
 
 - Remove unnecessary attributes
 - Minimize path data
 - Remove metadata and comments
 - Optimize viewBox
 
-### 10.3 SVG Rendering
+This is an implementation detail of individual resource packs, not a requirement of the discovery library.
 
-SVG content must be rendered to raster format for display:
+### 10.3 Resource Usage (Out of Scope)
 
-- **CairoSVG**: Python library for SVG to PNG/PDF conversion
-- **Pillow**: Limited SVG support (read-only)
-- **Custom Renderer**: Implement custom SVG rendering pipeline
+**Note**: This library focuses on discovery and retrieval of resources. How those resources are used (rendered, cached, transformed) is the responsibility of the consuming application.
 
-Example rendering pipeline:
+The library returns raw resource content:
+- **SVG icons**: SVG strings that can be used by any SVG-capable renderer
+- **Raster images**: Image bytes in their native format
+- **Other resources**: Raw content in their native format
 
-```python
-def render_svg_icon(key: SvgIconKey) -> Image.Image:
-    """Render SVG icon to PIL Image."""
-    # Resolve icon key
-    resolved_key = resolve_icon_key(key)
-    
-    # Get SVG content
-    registry = get_default_registry()
-    svg_content = registry.get_resource(resolved_key)
-    
-    # Render SVG to PNG bytes
-    import cairosvg
-    png_bytes = cairosvg.svg2png(
-        bytestring=svg_content.encode("utf-8"),
-        output_width=key.w,
-        output_height=key.h,
-    )
-    
-    # Load PNG bytes into PIL Image
-    from PIL import Image
-    import io
-    image = Image.open(io.BytesIO(png_bytes))
-    return image.convert("RGBA")
-```
+Consuming applications may:
+- Render SVG to raster formats using libraries like CairoSVG, Pillow, or custom renderers
+- Cache resources for performance
+- Apply additional transformations beyond what the library provides
+- Integrate resources into their own rendering pipelines
+
+These concerns are outside the scope of the discovery library.
 
 ## 11. Raster Image Resources
 
-### 11.1 Image Resource Keys
+### 11.1 Image Resource Descriptors
 
 ```python
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ImageResourceKey:
-    """Key for raster image resources."""
+class ImageResourceDescriptor:
+    """Descriptor for raster image resources."""
     
     pack: str
     name: str
     format: str = "png"  # "png", "jpg", "webp", etc.
-    target_size: tuple[int, int] | None = None
-    resize_mode: str = "fit"  # "fit", "crop", "stretch"
+    target_size: tuple[int, int] | None = None  # Optional hint for transformations
+    resize_mode: str = "fit"  # "fit", "crop", "stretch" (hint for transformations)
 ```
 
 ### 11.2 Image Provider
@@ -770,46 +769,23 @@ class ImageResourceProvider(ResourceProvider):
     def __init__(self, base_path: Path):
         self.base_path = base_path
     
-    def get_resource(self, key: object) -> bytes:
+    def get_resource(self, descriptor: object) -> bytes:
         """Get image bytes."""
-        if not isinstance(key, ImageResourceKey):
-            raise ValueError(f"Expected ImageResourceKey, got {type(key)}")
+        if not isinstance(descriptor, ImageResourceDescriptor):
+            raise ValueError(f"Expected ImageResourceDescriptor, got {type(descriptor)}")
         
-        image_path = self.base_path / f"{key.name}.{key.format}"
+        image_path = self.base_path / f"{descriptor.name}.{descriptor.format}"
         
         if not image_path.exists():
             raise ValueError(f"Image not found: {image_path}")
         
-        # Optionally resize image
-        if key.target_size:
-            from PIL import Image
-            img = Image.open(image_path)
-            img = self._resize_image(img, key.target_size, key.resize_mode)
-            
-            # Convert to bytes
-            import io
-            buffer = io.BytesIO()
-            img.save(buffer, format=key.format.upper())
-            return buffer.getvalue()
+        # Note: Image transformations (resizing, etc.) are optional and implementation-dependent
+        # The library returns raw image bytes. Transformations are hints that consuming
+        # applications may use, but the library itself doesn't perform transformations.
         
         # Return original image bytes
         with open(image_path, "rb") as f:
             return f.read()
-    
-    def _resize_image(
-        self,
-        img: Image.Image,
-        target_size: tuple[int, int],
-        mode: str,
-    ) -> Image.Image:
-        """Resize image according to mode."""
-        if mode == "fit":
-            img.thumbnail(target_size, Image.Resampling.LANCZOS)
-        elif mode == "crop":
-            img = img.resize(target_size, Image.Resampling.LANCZOS)
-        elif mode == "stretch":
-            img = img.resize(target_size, Image.Resampling.LANCZOS)
-        return img
 ```
 
 ## 12. Future Considerations
@@ -820,14 +796,14 @@ Support for audio files:
 
 ```python
 @dataclass(frozen=True, slots=True, kw_only=True)
-class AudioResourceKey:
-    """Key for audio resources."""
+class AudioResourceDescriptor:
+    """Descriptor for audio resources."""
     
     pack: str
     name: str
     format: str = "mp3"  # "mp3", "ogg", "wav"
-    start_time: float | None = None  # Start offset in seconds
-    duration: float | None = None  # Duration in seconds
+    start_time: float | None = None  # Optional hint for transformations
+    duration: float | None = None  # Optional hint for transformations
 ```
 
 ### 12.2 Video Resources
@@ -836,15 +812,15 @@ Support for video files:
 
 ```python
 @dataclass(frozen=True, slots=True, kw_only=True)
-class VideoResourceKey:
-    """Key for video resources."""
+class VideoResourceDescriptor:
+    """Descriptor for video resources."""
     
     pack: str
     name: str
     format: str = "mp4"  # "mp4", "webm"
-    target_size: tuple[int, int] | None = None
-    start_time: float | None = None
-    duration: float | None = None
+    target_size: tuple[int, int] | None = None  # Optional hint for transformations
+    start_time: float | None = None  # Optional hint for transformations
+    duration: float | None = None  # Optional hint for transformations
 ```
 
 ### 12.3 Resource Transformation Pipelines
@@ -874,32 +850,18 @@ Add resource search capabilities:
 - **Category Search**: Search resources by category
 - **Metadata Search**: Search resources by metadata fields
 
-## 13. Migration from deckr Prototype
+## 13. Design Origins
 
-The deckr prototype (`deckr/render/iconpacks/`) provides a working implementation that can be extracted and generalized.
+This design was informed by practical implementations that demonstrated the viability of combining resource discovery with extensible resource pack discovery via EntryPoints. The architecture emphasizes:
 
-### 13.1 Key Components to Extract
-
-- `_registry.py`: Resource registry and EntryPoints discovery
-- `_protocol.py`: Resource provider protocol definition
-- `_resolver.py`: Prefix-based resolution logic
-- `_lucide.py`: Lucide icon pack implementation (reference)
-
-### 13.2 Changes for Generic Framework
-
-1. **Generalize Protocol**: Rename `IconKeyRenderer` to `ResourceProvider`
-2. **Support Multiple Types**: Extend registry to handle multiple resource types
-3. **Entry Point Group**: Change from `deckr.iconpacks` to project-specific group
-4. **Package Structure**: Reorganize as standalone package
-5. **API Stability**: Define stable public API
-
-### 13.3 Backward Compatibility
-
-If maintaining compatibility with deckr:
-
-- Support both `deckr.iconpacks` and new entry point group
-- Provide migration guide for icon pack authors
-- Maintain API compatibility where possible
+- **Independence**: Standalone library with no framework dependencies
+- **Extensibility**: EntryPoints mechanism for third-party resource packs
+- **Universal Pattern**: All resource packs (Lucide, Feather, Material Design, etc.) follow the same discovery pattern:
+  - Discovery: Find the resource (via function call, file lookup, etc.)
+  - Optional transformations: Apply resource content modifications if requested (e.g., SVG string transformations)
+  - Return: Raw resource content (SVG strings, image bytes, etc.)
+  - No custom renderer needed: Rasterization and rendering are handled by consuming applications
+- **Clear Boundaries**: Library returns raw content; consuming applications handle rendering, caching, etc.
 
 ## 14. Example Usage
 
@@ -907,67 +869,64 @@ If maintaining compatibility with deckr:
 
 ```python
 from resourcediscovery import ResourceRegistry, get_default_registry
-from resourcediscovery.keys import SvgIconKey
+from resourcediscovery.descriptors import SvgIconDescriptor
 
 # Get default registry
 registry = get_default_registry()
 
-# Create icon key with prefix
-icon_key = SvgIconKey(
+# Create icon descriptor with prefix
+icon_descriptor = SvgIconDescriptor(
     ref="lucide:lightbulb",
-    w=24,
-    h=24,
-    tint="#FF0000",
+    w=24,  # Hint for transformations, not rendering instruction
+    h=24,  # Hint for transformations, not rendering instruction
+    tint="#FF0000",  # Optional SVG string transformation hint
 )
 
-# Get SVG content
-svg_content = registry.get_resource(icon_key)
-print(svg_content)  # SVG string
+# Get SVG content (raw SVG string)
+svg_content = registry.get_resource(icon_descriptor)
+print(svg_content)  # SVG string - how it's used is up to the consuming application
 ```
 
 ### 14.2 Pack-Specific Icon Usage
 
 ```python
-from resourcediscovery.keys import LucideIconKey
-from resourcediscovery.providers import LucideRenderer
+from resourcediscovery.descriptors import LucideIconDescriptor
+from resourcediscovery.providers import LucideProvider
 
-# Create pack-specific key
-icon_key = LucideIconKey(
+# Create pack-specific descriptor
+icon_descriptor = LucideIconDescriptor(
     name="lightbulb",
-    w=24,
-    h=24,
-    tint="#FF0000",
-    stroke_width=2.0,
+    w=24,  # Hint for transformations
+    h=24,  # Hint for transformations
+    tint="#FF0000",  # Optional SVG string transformation hint
+    stroke_width=2.0,  # Optional SVG string transformation hint
 )
 
 # Get provider and retrieve SVG
 registry = get_default_registry()
-provider = registry.get_provider(icon_key)
-svg_content = provider.get_resource(icon_key)
+provider = registry.get_provider(icon_descriptor)
+svg_content = provider.get_resource(icon_descriptor)
+# svg_content is a raw SVG string - rendering is handled by consuming application
 ```
 
 ### 14.3 Image Resource Usage
 
 ```python
-from resourcediscovery.keys import ImageResourceKey
+from resourcediscovery.descriptors import ImageResourceDescriptor
 
-# Create image key
-image_key = ImageResourceKey(
+# Create image descriptor
+image_descriptor = ImageResourceDescriptor(
     pack="my-images",
     name="logo",
     format="png",
-    target_size=(200, 200),
-    resize_mode="fit",
+    target_size=(200, 200),  # Optional hint for transformations
+    resize_mode="fit",  # Optional hint for transformations
 )
 
-# Get image bytes
+# Get image bytes (raw image data)
 registry = get_default_registry()
-image_bytes = registry.get_resource(image_key)
-
-# Use with PIL
-from PIL import Image
-import io
-img = Image.open(io.BytesIO(image_bytes))
+image_bytes = registry.get_resource(image_descriptor)
+# image_bytes is raw image data - how it's used is up to the consuming application
 ```
 
 ### 14.4 Resource Pack Implementation
@@ -975,11 +934,11 @@ img = Image.open(io.BytesIO(image_bytes))
 ```python
 # my_icon_pack/__init__.py
 from my_icon_pack.provider import MyIconProvider
-from my_icon_pack.keys import MyIconKey
+from my_icon_pack.descriptors import MyIconDescriptor
 
 def get_resource_provider():
     """Entry point factory for icon pack."""
-    return (MyIconKey, MyIconProvider(), ["myicons", "mi"])
+    return (MyIconDescriptor, MyIconProvider(), ["myicons", "mi"])
 
 # setup.py or pyproject.toml
 # [project.entry-points."resourcepacks"]
