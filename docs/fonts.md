@@ -378,16 +378,35 @@ def parse_filename(path: Path) -> tuple[int | None, str]:
 
 ## 6. Font Resolution Algorithm
 
-The font resolution algorithm matches font requests (family, size, weight, style) to discovered fonts using a scoring system.
+The resolution mechanism follows the W3C CSS Fonts Level 4 matching algorithm to ensure behavior consistent with browsers and standard design tools.
 
-### 6.1 Matching Criteria
+### 6.1 Matching Hierarchy
 
-1. **Family Name**: Exact match (case-insensitive)
-2. **Weight**: Closest match (prefer exact, then closest)
-3. **Style**: Exact match (normal vs italic)
-4. **Width/Stretch**: Closest match (prefer exact, then closest)
+When `find_font(family, weight, style, width)` is called, the library filters the font pool in this strict order:
 
-### 6.2 Scoring Algorithm
+1. **Family Match:**
+   - Exact case-insensitive match of the specific family name (e.g., "Open Sans").
+   - *If no match:* Check widely known aliases (e.g., "Arial" -> "Liberation Sans" on Linux).
+   - *If still no match:* Fall back to the system default font (e.g., San Francisco on macOS, Segoe UI on Windows).
+
+2. **Stretch Match (Width):**
+   - Filter available faces to the closest stretch (e.g., if "condensed" is requested, prefer "semi-condensed" over "expanded").
+   - Uses the 9-point width scale: ultra-condensed, extra-condensed, condensed, semi-condensed, normal, semi-expanded, expanded, extra-expanded, ultra-expanded.
+
+3. **Style Match:**
+   - If `italic` is requested: Prefer `italic` > `oblique` > `normal`.
+   - If `normal` is requested: Prefer `normal` > `oblique` > `italic`.
+
+4. **Weight Match:**
+   - If the exact weight is missing, follow the standard CSS fallback:
+     - **Target < 400:** Look downwards (lighter), then upwards.
+     - **Target > 500:** Look upwards (bolder), then downwards.
+     - **Target 400 or 500:** Specific rules for snapping to regular/medium.
+   - Example: Requesting "Bold" (700) when only "Black" (900) and "Regular" (400) exist will select "Black" (because >500 biases upward).
+
+### 6.2 Distance Calculation (Implementation)
+
+To implement this efficiently without complex filtering chains, we calculate a "Manhattan Distance" for every font in the resolved family. The font with the lowest distance score is selected.
 
 ```python
 def find_font(
@@ -401,49 +420,41 @@ def find_font(
     """Find and load a font by family, size, weight, style, and width."""
     self.discover()
     
+    # Step 1: Family matching with aliases
     family_lower = family.lower()
     candidates = self._fonts.get(family_lower, [])
+    
+    # Try aliases if no direct match
+    if not candidates:
+        candidates = self._try_family_aliases(family_lower)
+    
+    # System default fallback
+    if not candidates:
+        candidates = self._get_system_default_font()
     
     if not candidates:
         return None
     
-    # Score candidates using CSS-style matching
+    # Step 2-4: Calculate Manhattan Distance for hierarchical matching
     best: FontInfo | None = None
-    best_score = -1
+    best_distance = float('inf')
     
-    # Width mapping for scoring
+    # Width order for distance calculation
     width_order = ["ultra-condensed", "extra-condensed", "condensed",
                    "semi-condensed", "normal", "semi-expanded",
                    "expanded", "extra-expanded", "ultra-expanded"]
     
     for candidate in candidates:
-        score = 0
+        distance = self._calculate_distance(
+            target_weight=weight,
+            target_style=style,
+            target_width=width,
+            candidate=candidate,
+            width_order=width_order
+        )
         
-        # Weight matching (closer is better, max 1000 points)
-        if weight is not None and candidate.weight is not None:
-            weight_diff = abs(candidate.weight - weight)
-            score += 1000 - weight_diff  # Prefer closer weights
-        elif weight is None or candidate.weight is None:
-            score += 500  # Neutral score if weight unspecified
-        
-        # Style matching (exact match required, 100 points)
-        if candidate.style == style:
-            score += 100
-        
-        # Width matching (closer is better, max 500 points)
-        if width is not None and candidate.width is not None:
-            try:
-                req_idx = width_order.index(width)
-                cand_idx = width_order.index(candidate.width)
-                width_diff = abs(req_idx - cand_idx)
-                score += 500 - (width_diff * 50)  # Prefer closer widths
-            except ValueError:
-                score += 250  # Unknown width values get neutral score
-        elif width is None or candidate.width is None:
-            score += 250  # Neutral score if width unspecified
-        
-        if score > best_score:
-            best_score = score
+        if distance < best_distance:
+            best_distance = distance
             best = candidate
     
     if best is None:
@@ -454,15 +465,132 @@ def find_font(
         return ImageFont.truetype(str(best.path), size=size)
     except Exception:
         return None
+
+def _calculate_distance(
+    self,
+    target_weight: int | None,
+    target_style: str,
+    target_width: str | None,
+    candidate: FontInfo,
+    width_order: list[str],
+) -> float:
+    """Calculate Manhattan Distance with hierarchy: Stretch > Style > Weight."""
+    
+    # Stretch/Width distance (highest priority: 1000x multiplier)
+    stretch_dist = 0
+    if target_width is not None and candidate.width is not None:
+        try:
+            target_idx = width_order.index(target_width)
+            cand_idx = width_order.index(candidate.width)
+            stretch_dist = abs(target_idx - cand_idx)
+        except ValueError:
+            stretch_dist = 5  # Unknown width = maximum distance
+    elif target_width is not None or candidate.width is not None:
+        stretch_dist = 5  # Mismatch (one specified, one not)
+    
+    # Style distance (medium priority: 100x multiplier)
+    # Prefer italic > oblique > normal when italic requested
+    # Prefer normal > oblique > italic when normal requested
+    style_dist = 0
+    if target_style == "italic":
+        if candidate.style == "italic":
+            style_dist = 0
+        elif candidate.style == "oblique":
+            style_dist = 1
+        else:  # normal
+            style_dist = 2
+    elif target_style == "normal":
+        if candidate.style == "normal":
+            style_dist = 0
+        elif candidate.style == "oblique":
+            style_dist = 1
+        else:  # italic
+            style_dist = 2
+    else:  # oblique or unknown
+        style_dist = 0 if candidate.style == target_style else 1
+    
+    # Weight distance (lowest priority: 1x multiplier)
+    # Apply CSS fallback rules for weight matching
+    weight_dist = 0
+    if target_weight is not None and candidate.weight is not None:
+        if target_weight == candidate.weight:
+            weight_dist = 0
+        elif target_weight < 400:
+            # Look downwards (lighter), then upwards
+            if candidate.weight < target_weight:
+                weight_dist = target_weight - candidate.weight
+            else:
+                weight_dist = (candidate.weight - target_weight) * 2  # Penalize heavier
+        elif target_weight > 500:
+            # Look upwards (bolder), then downwards
+            if candidate.weight > target_weight:
+                weight_dist = candidate.weight - target_weight
+            else:
+                weight_dist = (target_weight - candidate.weight) * 2  # Penalize lighter
+        else:  # 400 or 500
+            # Specific rules for regular/medium
+            if target_weight == 400:
+                # Prefer 400, then 500, then closest
+                if candidate.weight == 500:
+                    weight_dist = 1
+                else:
+                    weight_dist = abs(candidate.weight - target_weight)
+            else:  # 500
+                if candidate.weight == 400:
+                    weight_dist = 1
+                else:
+                    weight_dist = abs(candidate.weight - target_weight)
+        # Cap weight distance to prevent overflow
+        weight_dist = min(weight_dist, 800)
+    elif target_weight is not None or candidate.weight is not None:
+        weight_dist = 400  # Mismatch penalty
+    
+    # Enforce hierarchy: Stretch > Style > Weight
+    return (stretch_dist * 1000) + (style_dist * 100) + (weight_dist * 1)
 ```
+
+*Note: The font with the lowest distance score is selected. This ensures that stretch (width) is always prioritized over style, which is always prioritized over weight, matching W3C CSS behavior.*
 
 ### 6.3 Fallback Strategy
 
-If no exact match is found:
+The matching hierarchy (Section 6.1) defines the fallback behavior:
 
-1. **Family Fallback**: Return first font in family (if any candidates exist)
-2. **System Fallback**: Use platform default font (implementation-dependent)
-3. **Error**: Return `None` if no font can be resolved
+1. **Family Fallback**: If no exact family match, try aliases, then system default font
+2. **Attribute Fallback**: Within the matched family, the distance calculation automatically handles:
+   - Stretch: Closest width variant
+   - Style: Prefers italic > oblique > normal (or reverse for normal requests)
+   - Weight: CSS-style directional fallback (lighter/bolder based on target)
+3. **Final Fallback**: If no font can be resolved, return `None`
+
+### 6.4 Weight Normalization
+
+Font weight values must be normalized to integers (100-900) for distance calculation. The parser converts string weights to integer values using the following mapping:
+
+```python
+WEIGHT_MAP = {
+    "thin": 100,
+    "hairline": 100,
+    "extralight": 200,
+    "ultralight": 200,
+    "light": 300,
+    "book": 350,
+    "regular": 400,
+    "normal": 400,
+    "medium": 500,
+    "demibold": 600,
+    "semibold": 600,
+    "demi": 600,
+    "bold": 700,
+    "extrabold": 800,
+    "ultrabold": 800,
+    "black": 900,
+    "heavy": 900,
+    "extrablack": 950,
+    "ultrablack": 950,
+}
+```
+
+This normalization ensures consistent weight matching regardless of how the weight is specified in font metadata or filenames.
 
 ## 7. Caching Strategy
 
