@@ -689,31 +689,14 @@ def validate_font(self, path: Path) -> bool:
     ...
 ```
 
-## 12. Migration from deckr Prototype
+## 12. Design Origins
 
-The deckr prototype (`deckr/render/fonts/`) provides a working implementation that can be extracted into a standalone project.
+This design was informed by practical implementations that demonstrated the viability of combining system font discovery with extensible font pack discovery via EntryPoints. The architecture emphasizes:
 
-### 12.1 Key Components to Extract
-
-- `_discovery.py`: System font directory discovery
-- `_registry.py`: Font registry and resolution logic
-- `_spec.py`: Font reference specification (optional)
-
-### 12.2 Changes for Standalone Project
-
-1. **Entry Point Group**: Change from `deckr.fontpacks` to project-specific group
-2. **Package Structure**: Reorganize as standalone package
-3. **Dependencies**: Minimize dependencies (fonttools optional, PIL required)
-4. **API Stability**: Define stable public API
-5. **Documentation**: Add comprehensive documentation and examples
-
-### 12.3 Backward Compatibility
-
-If maintaining compatibility with deckr:
-
-- Support both `deckr.fontpacks` and new entry point group
-- Provide migration guide for font pack authors
-- Maintain API compatibility where possible
+- **Independence**: Standalone library with no framework dependencies
+- **Extensibility**: EntryPoints mechanism for third-party font packs
+- **Cross-platform**: Unified API across macOS, Linux, and Windows
+- **Minimal Dependencies**: Core functionality with optional enhancements (fonttools)
 
 ## 13. Example Usage
 
