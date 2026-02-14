@@ -1,5 +1,5 @@
 [project]
-name = "immutable-op"
+name = "invariant"
 version = "0.1.0"
 description = ""
 authors = [
@@ -23,6 +23,7 @@ packages = [{include = "invariant", from = "src"}]
 ruff = "^0.15.1"
 pytest = "^9.0.2"
 pytest-cov = "^6.0.0"
+pre-commit = "^3.8.0"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

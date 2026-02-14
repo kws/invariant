@@ -4,12 +4,11 @@ import pytest
 
 from invariant.graph import GraphResolver
 from invariant.node import Node
-from invariant.registry import OpRegistry
 
 
 class TestGraphResolver:
     """Tests for GraphResolver."""
-    
+
     def test_validate_simple_graph(self):
         """Test validation of a simple valid graph."""
         resolver = GraphResolver()
@@ -18,7 +17,7 @@ class TestGraphResolver:
             "b": Node(op_name="op2", params={}, deps=["a"]),
         }
         resolver.validate(graph)  # Should not raise
-    
+
     def test_validate_missing_dependency(self):
         """Test that missing dependency raises ValueError."""
         resolver = GraphResolver()
@@ -27,7 +26,7 @@ class TestGraphResolver:
         }
         with pytest.raises(ValueError, match="dependency.*doesn't exist"):
             resolver.validate(graph)
-    
+
     def test_validate_with_registry(self, registry):
         """Test validation with OpRegistry."""
         registry.register("op1", lambda m: None)
@@ -36,7 +35,7 @@ class TestGraphResolver:
             "a": Node(op_name="op1", params={}, deps=[]),
         }
         resolver.validate(graph)  # Should not raise
-    
+
     def test_validate_unregistered_op(self, registry):
         """Test that unregistered op raises ValueError."""
         resolver = GraphResolver(registry)
@@ -45,7 +44,7 @@ class TestGraphResolver:
         }
         with pytest.raises(ValueError, match="unregistered op"):
             resolver.validate(graph)
-    
+
     def test_has_cycle_detection(self):
         """Test cycle detection."""
         resolver = GraphResolver()
@@ -55,7 +54,7 @@ class TestGraphResolver:
             "b": Node(op_name="op2", params={}, deps=["a"]),
         }
         assert resolver._has_cycle(graph)
-    
+
     def test_has_cycle_self_loop(self):
         """Test self-loop detection."""
         resolver = GraphResolver()
@@ -63,7 +62,7 @@ class TestGraphResolver:
             "a": Node(op_name="op1", params={}, deps=["a"]),
         }
         assert resolver._has_cycle(graph)
-    
+
     def test_has_cycle_long_cycle(self):
         """Test detection of longer cycles."""
         resolver = GraphResolver()
@@ -74,7 +73,7 @@ class TestGraphResolver:
             "c": Node(op_name="op3", params={}, deps=["b"]),
         }
         assert resolver._has_cycle(graph)
-    
+
     def test_has_cycle_no_cycle(self):
         """Test that acyclic graph returns False."""
         resolver = GraphResolver()
@@ -84,7 +83,7 @@ class TestGraphResolver:
             "c": Node(op_name="op3", params={}, deps=["a"]),
         }
         assert not resolver._has_cycle(graph)
-    
+
     def test_validate_raises_on_cycle(self):
         """Test that validate raises on cycle."""
         resolver = GraphResolver()
@@ -94,7 +93,7 @@ class TestGraphResolver:
         }
         with pytest.raises(ValueError, match="contains cycles"):
             resolver.validate(graph)
-    
+
     def test_topological_sort_simple(self):
         """Test topological sort of simple graph."""
         resolver = GraphResolver()
@@ -106,7 +105,7 @@ class TestGraphResolver:
         assert result == ["a", "b"] or result == ["b", "a"]
         # Actually, dependencies come first, so "a" should come before "b"
         assert result.index("a") < result.index("b")
-    
+
     def test_topological_sort_diamond(self):
         """Test topological sort of diamond dependency pattern."""
         resolver = GraphResolver()
@@ -133,7 +132,7 @@ class TestGraphResolver:
         # b and c must come before d
         assert result.index("b") < result.index("d")
         assert result.index("c") < result.index("d")
-    
+
     def test_topological_sort_raises_on_cycle(self):
         """Test that topological sort raises on cycle."""
         resolver = GraphResolver()
@@ -143,7 +142,7 @@ class TestGraphResolver:
         }
         with pytest.raises(ValueError, match="contains cycles"):
             resolver.topological_sort(graph)
-    
+
     def test_resolve(self):
         """Test resolve method (validate + sort)."""
         resolver = GraphResolver()
@@ -153,7 +152,7 @@ class TestGraphResolver:
         }
         result = resolver.resolve(graph)
         assert result == ["a", "b"]
-    
+
     def test_resolve_raises_on_cycle(self):
         """Test that resolve raises on cycle."""
         resolver = GraphResolver()
@@ -163,7 +162,7 @@ class TestGraphResolver:
         }
         with pytest.raises(ValueError):
             resolver.resolve(graph)
-    
+
     def test_disconnected_components(self):
         """Test graph with disconnected components."""
         resolver = GraphResolver()
@@ -174,4 +173,3 @@ class TestGraphResolver:
         result = resolver.topological_sort(graph)
         assert set(result) == {"a", "b"}
         assert len(result) == 2
-

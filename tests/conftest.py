@@ -18,4 +18,3 @@ def registry():
 def store():
     """Create a fresh MemoryStore instance."""
     return MemoryStore()
-

@@ -4,7 +4,7 @@ import pytest
 
 from invariant.protocol import ICacheable
 from invariant.registry import OpRegistry
-from invariant.types import Integer, String
+from invariant.types import String
 
 
 def test_singleton():
@@ -16,9 +16,10 @@ def test_singleton():
 
 def test_register_and_get(registry):
     """Test registering and getting an operation."""
+
     def test_op(manifest: dict) -> ICacheable:
         return String("result")
-    
+
     registry.register("test_op", test_op)
     assert registry.has("test_op")
     retrieved = registry.get("test_op")
@@ -27,18 +28,20 @@ def test_register_and_get(registry):
 
 def test_register_empty_name(registry):
     """Test that registering with empty name raises ValueError."""
+
     def test_op(manifest: dict) -> ICacheable:
         return String("result")
-    
+
     with pytest.raises(ValueError, match="cannot be empty"):
         registry.register("", test_op)
 
 
 def test_register_duplicate(registry):
     """Test that registering duplicate name raises ValueError."""
+
     def test_op(manifest: dict) -> ICacheable:
         return String("result")
-    
+
     registry.register("test_op", test_op)
     with pytest.raises(ValueError, match="already registered"):
         registry.register("test_op", test_op)
@@ -52,9 +55,10 @@ def test_get_unregistered(registry):
 
 def test_has(registry):
     """Test has method."""
+
     def test_op(manifest: dict) -> ICacheable:
         return String("result")
-    
+
     assert not registry.has("test_op")
     registry.register("test_op", test_op)
     assert registry.has("test_op")
@@ -62,11 +66,11 @@ def test_has(registry):
 
 def test_clear(registry):
     """Test clear method."""
+
     def test_op(manifest: dict) -> ICacheable:
         return String("result")
-    
+
     registry.register("test_op", test_op)
     assert registry.has("test_op")
     registry.clear()
     assert not registry.has("test_op")
-

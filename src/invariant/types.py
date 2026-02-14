@@ -1,7 +1,6 @@
 """Basic cacheable types implementing ICacheable protocol."""
 
 from decimal import Decimal
-from io import BytesIO
 from typing import BinaryIO
 
 from invariant.protocol import ICacheable
@@ -12,7 +11,7 @@ class String(ICacheable):
 
     def __init__(self, value: str) -> None:
         """Initialize with a string value.
-        
+
         Args:
             value: The string value to wrap.
         """
@@ -21,6 +20,7 @@ class String(ICacheable):
     def get_stable_hash(self) -> str:
         """Return SHA-256 hash of the string value."""
         import hashlib
+
         return hashlib.sha256(self.value.encode("utf-8")).hexdigest()
 
     def to_stream(self, stream: BinaryIO) -> None:
@@ -52,7 +52,7 @@ class Integer(ICacheable):
 
     def __init__(self, value: int) -> None:
         """Initialize with an integer value.
-        
+
         Args:
             value: The integer value to wrap.
         """
@@ -61,6 +61,7 @@ class Integer(ICacheable):
     def get_stable_hash(self) -> str:
         """Return SHA-256 hash of the integer value."""
         import hashlib
+
         return hashlib.sha256(str(self.value).encode("utf-8")).hexdigest()
 
     def to_stream(self, stream: BinaryIO) -> None:
@@ -86,14 +87,14 @@ class Integer(ICacheable):
 
 class DecimalValue(ICacheable):
     """A cacheable Decimal type.
-    
+
     Decimal values are canonicalized to string representation for hashing
     to ensure determinism across architectures.
     """
 
     def __init__(self, value: Decimal | str | int | float) -> None:
         """Initialize with a Decimal value.
-        
+
         Args:
             value: The value to convert to Decimal. Can be Decimal, string,
                   int, or float (though float is discouraged per architecture).
@@ -105,11 +106,12 @@ class DecimalValue(ICacheable):
 
     def get_stable_hash(self) -> str:
         """Return SHA-256 hash of canonicalized Decimal string.
-        
+
         The Decimal is canonicalized to string representation to ensure
         deterministic hashing across different architectures.
         """
         import hashlib
+
         # Canonicalize to string for deterministic hashing
         canonical = str(self.value)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -137,4 +139,3 @@ class DecimalValue(ICacheable):
     def __repr__(self) -> str:
         """String representation."""
         return f"DecimalValue({self.value})"
-
