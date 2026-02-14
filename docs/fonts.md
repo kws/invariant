@@ -68,36 +68,21 @@ The System Font Pack is a built-in Font Pack that exposes the host operating sys
 
 ### 3.1 SystemFontPack Implementation
 
+The System Font Pack is implemented as an abstract base class with OS-specific subclasses to avoid conditional logic and improve maintainability:
+
 ```python
-class SystemFontPack:
+from abc import ABC, abstractmethod
+
+class SystemFontPack(ABC):
     """
-    A built-in Font Pack that exposes the host OS fonts.
+    Abstract base class for platform-specific system font packs.
     This implements the standard Font Pack protocol.
     """
     
+    @abstractmethod
     def get_font_directories(self) -> list[Path]:
         """Returns platform-specific system paths."""
-        system = platform.system()
-        if system == "Darwin":
-            return [
-                Path("/System/Library/Fonts"),      # System fonts
-                Path("/Library/Fonts"),              # System-wide fonts
-                Path.home() / "Library" / "Fonts",  # User fonts
-            ]
-        elif system == "Windows":
-            return [
-                Path(os.environ.get("WINDIR", "C:\\Windows")) / "Fonts",
-                Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "Windows" / "Fonts",
-            ]
-        elif system == "Linux":
-            return [
-                Path.home() / ".fonts",                          # Legacy user fonts
-                Path("/usr/share/fonts"),                        # System fonts
-                Path("/usr/local/share/fonts"),                 # Local system fonts
-                Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "fonts",  # User fonts (XDG Base Directory)
-                Path("/run/host/fonts"),                         # Flatpak/Snap sandbox fonts
-            ]
-        return []
+        ...
     
     def get_priority(self) -> int:
         """Returns the priority of this pack (0 = lowest)."""
@@ -106,11 +91,58 @@ class SystemFontPack:
     def get_name(self) -> str:
         """Returns the canonical name for this pack (used in blocklist)."""
         return "system-fonts"
+
+
+class DarwinSystemFontPack(SystemFontPack):
+    """System font pack for macOS."""
+    
+    def get_font_directories(self) -> list[Path]:
+        return [
+            Path("/System/Library/Fonts"),      # System fonts
+            Path("/Library/Fonts"),              # System-wide fonts
+            Path.home() / "Library" / "Fonts",  # User fonts
+        ]
+
+
+class WindowsSystemFontPack(SystemFontPack):
+    """System font pack for Windows."""
+    
+    def get_font_directories(self) -> list[Path]:
+        return [
+            Path(os.environ.get("WINDIR", "C:\\Windows")) / "Fonts",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "Windows" / "Fonts",
+        ]
+
+
+class LinuxSystemFontPack(SystemFontPack):
+    """System font pack for Linux."""
+    
+    def get_font_directories(self) -> list[Path]:
+        return [
+            Path.home() / ".fonts",                          # Legacy user fonts
+            Path("/usr/share/fonts"),                        # System fonts
+            Path("/usr/local/share/fonts"),                 # Local system fonts
+            Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "fonts",  # User fonts (XDG Base Directory)
+            Path("/run/host/fonts"),                         # Flatpak/Snap sandbox fonts
+        ]
+
+
+def create_system_font_pack() -> SystemFontPack:
+    """Factory function to create the appropriate system font pack for the current platform."""
+    system = platform.system()
+    if system == "Darwin":
+        return DarwinSystemFontPack()
+    elif system == "Windows":
+        return WindowsSystemFontPack()
+    elif system == "Linux":
+        return LinuxSystemFontPack()
+    else:
+        raise NotImplementedError(f"Unsupported platform: {system}")
 ```
 
 ### 3.2 Platform-Specific Directories
 
-The `SystemFontPack.get_font_directories()` method returns platform-specific directories as follows:
+The OS-specific `SystemFontPack` subclasses return platform-specific directories as follows:
 
 #### macOS
 
@@ -143,7 +175,7 @@ The `SystemFontPack.get_font_directories()` method returns platform-specific dir
 ]
 ```
 
-### 3.2 Font File Discovery
+### 3.3 Font File Discovery
 
 Font files are discovered by recursively scanning directories for common font file extensions:
 
@@ -155,7 +187,7 @@ Font files are discovered by recursively scanning directories for common font fi
 
 **Note**: While `.woff` and `.woff2` are web font formats, they may appear in system directories and should be supported for completeness.
 
-### 3.3 Implementation Considerations
+### 3.4 Implementation Considerations
 
 - **Permission Handling**: Gracefully handle directories that cannot be read (OSError, PermissionError)
 - **Symlink Resolution**: Follow symlinks to discover fonts in linked directories
@@ -275,27 +307,6 @@ def get_font_directories():
 ```toml
 [project.entry-points."fontpacks"]
 "myapp-fonts" = "myapp:get_font_directories"
-```
-
-```python
-# my_font_pack/__init__.py
-from pathlib import Path
-from importlib.resources import files
-
-def get_font_directories():
-    """Entry point factory returning font directory paths."""
-    # Option 1: Return Path objects
-    package = files("my_font_pack.fonts")
-    return [Path(str(package))]
-    
-    # Option 2: Return string paths
-    # return [str(Path(__file__).parent / "fonts")]
-    
-    # Option 3: Return multiple directories
-    # return [
-    #     Path(str(files("my_font_pack.fonts"))),
-    #     Path.home() / ".my_font_pack" / "fonts",
-    # ]
 ```
 
 ### 4.5 Discovery Implementation
@@ -489,12 +500,15 @@ To implement this efficiently without complex filtering chains, we calculate a "
 def find_font(
     self,
     family: str,
-    size: int,
     weight: int | None = None,
     style: str = "normal",
     width: str | None = None,
-) -> ImageFont.FreeTypeFont | None:
-    """Find and load a font by family, size, weight, style, and width."""
+) -> FontInfo | None:
+    """Find a font by family, weight, style, and width.
+    
+    Returns FontInfo object containing the font path and metadata.
+    Use load_font() or FontInfo.load() to load as PIL ImageFont if needed.
+    """
     self.discover()
     
     # Step 1: Family matching with aliases
@@ -676,7 +690,7 @@ Font discovery and resolution results are cached to improve performance.
 ### 7.1 Discovery Cache
 
 - **Font Registry**: Cache discovered `FontInfo` objects keyed by family name (lowercase)
-- **Priority Handling**: When multiple fonts with the same family name exist, Font Pack fonts override System Font fonts in the cache
+- **Priority Handling**: When multiple fonts with the same family name exist, fonts from higher-priority packs override fonts from lower-priority packs in the cache
 - **Lazy Discovery**: Only discover fonts when `discover()` is called
 - **One-time Discovery**: Mark registry as discovered to avoid repeated scans
 
@@ -690,43 +704,94 @@ Font discovery and resolution results are cached to improve performance.
 
 ```python
 class FontRegistry:
-    def __init__(self) -> None:
+    def __init__(self, blocklist: set[str] | None = None) -> None:
         self._fonts: dict[str, list[FontInfo]] = {}  # family -> [FontInfo]
-        self._font_sources: dict[Path, str] = {}  # path -> "fontpack" | "system"
+        self._font_pack_priorities: dict[Path, int] = {}  # path -> priority
+        self._font_pack_names: dict[Path, str] = {}  # path -> pack name
         self._cache: dict[tuple[str, int, int | None, str, str | None], Path] = {}
         self._discovered = False
+        self._blocklist = self._parse_blocklist(blocklist)
+    
+    def _parse_blocklist(self, blocklist: set[str] | None) -> set[str]:
+        """Parse blocklist from constructor and environment variable."""
+        result = set(blocklist) if blocklist else set()
+        
+        # Merge with environment variable
+        env_blocklist = os.environ.get("FONT_DISCOVERY_BLOCKLIST", "")
+        if env_blocklist:
+            result.update(name.strip() for name in env_blocklist.split(",") if name.strip())
+        
+        return result
     
     def discover(self) -> None:
-        """Discover fonts with priority: Font Packs first, then System Fonts."""
+        """Discover fonts with priority: High-priority packs first, then low-priority packs."""
         if self._discovered:
             return
         
-        # Discover Font Packs first (highest priority)
-        font_pack_dirs = get_font_pack_directories()
-        for dir_path in font_pack_dirs:
-            self._scan_directory(dir_path, source="fontpack")
+        # Collect all packs with their priorities
+        packs: list[tuple[list[Path], int, str]] = []
         
-        # Discover System Fonts second (fallback)
-        system_dirs = get_system_font_directories()
-        for dir_path in system_dirs:
-            self._scan_directory(dir_path, source="system", allow_override=False)
+        # 1. Load System Font Pack (unless blocked)
+        if "system-fonts" not in self._blocklist:
+            system_pack = create_system_font_pack()
+            system_dirs = system_pack.get_font_directories()
+            packs.append((system_dirs, system_pack.get_priority(), system_pack.get_name()))
+        
+        # 2. Load External Packs via EntryPoints
+        for ep in self._get_entry_points():
+            pack_name = ep.name
+            if pack_name in self._blocklist:
+                continue  # Skip blocked packs
+            
+            try:
+                factory = ep.load()
+                pack = factory()
+                dirs = pack.get_font_directories()
+                priority = pack.get_priority() if hasattr(pack, 'get_priority') else 100
+                packs.append((dirs, priority, pack.get_name() if hasattr(pack, 'get_name') else pack_name))
+            except Exception:
+                continue
+        
+        # Sort packs by priority (highest first)
+        packs.sort(key=lambda x: x[1], reverse=True)
+        
+        # Process packs in priority order
+        for dirs, priority, pack_name in packs:
+            for dir_path in dirs:
+                self._scan_directory(dir_path, priority=priority, pack_name=pack_name)
         
         self._discovered = True
     
-    def _scan_directory(self, dir_path: Path, source: str, allow_override: bool = True) -> None:
+    def _scan_directory(self, dir_path: Path, priority: int, pack_name: str) -> None:
         """Scan directory and add fonts, respecting priority."""
         for font_file in self._find_font_files(dir_path):
             font_info = parse_font_file(font_file)
             if font_info:
                 family_lower = font_info.family.lower()
                 
-                # If font pack, always add (may override system fonts)
-                # If system font, only add if not already present from font pack
-                if allow_override or family_lower not in self._fonts:
+                # Check if we should override existing font from lower-priority pack
+                should_add = True
+                if family_lower in self._fonts:
+                    # Check if existing fonts are from lower-priority packs
+                    for existing_font in self._fonts[family_lower]:
+                        existing_priority = self._font_pack_priorities.get(existing_font.path, -1)
+                        if priority <= existing_priority:
+                            # This pack has same or lower priority, don't override
+                            should_add = False
+                            break
+                    # If this pack has higher priority, remove lower-priority fonts
+                    if should_add:
+                        self._fonts[family_lower] = [
+                            f for f in self._fonts[family_lower]
+                            if self._font_pack_priorities.get(f.path, -1) >= priority
+                        ]
+                
+                if should_add:
                     if family_lower not in self._fonts:
                         self._fonts[family_lower] = []
                     self._fonts[family_lower].append(font_info)
-                    self._font_sources[font_info.path] = source
+                    self._font_pack_priorities[font_info.path] = priority
+                    self._font_pack_names[font_info.path] = pack_name
 ```
 
 ## 8. API Design
@@ -740,18 +805,33 @@ class FontRegistry:
     """Registry for discovering and resolving fonts."""
     
     def discover(self) -> None:
-        """Discover fonts from all sources (Font Packs first, then System Fonts)."""
+        """Discover fonts from all registered packs (high-priority first)."""
         ...
     
     def find_font(
         self,
         family: str,
-        size: int,
         weight: int | None = None,
         style: str = "normal",
         width: str | None = None,
+    ) -> FontInfo | None:
+        """Find a font by family, weight, style, and width.
+        
+        Returns FontInfo object containing the font path and metadata.
+        Use load_font() or FontInfo.load() to load as PIL ImageFont if needed.
+        """
+        ...
+    
+    def load_font(
+        self,
+        font_info: FontInfo,
+        size: int,
     ) -> ImageFont.FreeTypeFont | None:
-        """Find and load a font."""
+        """Load a FontInfo object as a PIL ImageFont.
+        
+        This method imports PIL only when called, keeping JustMyType
+        decoupled from Pillow for users who don't need it.
+        """
         ...
     
     def list_families(self) -> Iterator[str]:
@@ -782,6 +862,20 @@ class FontInfo:
     width: str | None = None
     postscript_name: str | None = None
     variant: str | None = None
+    
+    def load(self, size: int) -> ImageFont.FreeTypeFont | None:
+        """Load this font as a PIL ImageFont.
+        
+        This method imports PIL only when called, keeping JustMyType
+        decoupled from Pillow for users who don't need it.
+        """
+        try:
+            from PIL import ImageFont
+            return ImageFont.truetype(str(self.path), size=size)
+        except ImportError:
+            raise ImportError("Pillow (PIL) is required to load fonts. Install with: pip install Pillow")
+        except Exception:
+            return None
 ```
 
 ### 8.2 Factory Functions
@@ -814,10 +908,19 @@ class FontRef:
     weight: int | None = None
     style: str = "normal"
     
+    def to_font_info(
+        self, registry: FontRegistry | None = None
+    ) -> FontInfo | None:
+        """Resolve this font reference to a FontInfo object."""
+        ...
+    
     def to_image_font(
         self, registry: FontRegistry | None = None
     ) -> ImageFont.FreeTypeFont | None:
-        """Resolve this font reference to a PIL ImageFont."""
+        """Resolve this font reference to a PIL ImageFont.
+        
+        Deprecated: Use to_font_info() and FontInfo.load() instead.
+        """
         ...
 ```
 
@@ -921,10 +1024,9 @@ def find_font_for_locale(
     self,
     family: str,
     locale: str,
-    size: int,
     weight: int | None = None,
     style: str = "normal",
-) -> ImageFont.FreeTypeFont | None:
+) -> FontInfo | None:
     """Find font with locale-aware fallback."""
     # Try exact locale match first
     # Fall back to language family
@@ -940,15 +1042,14 @@ Implement CSS-like font fallback chains:
 def find_font_with_fallback(
     self,
     families: list[str],  # ["Arial", "Helvetica", "sans-serif"]
-    size: int,
     weight: int | None = None,
     style: str = "normal",
-) -> ImageFont.FreeTypeFont | None:
+) -> FontInfo | None:
     """Find font using fallback chain."""
     for family in families:
-        font = self.find_font(family, size, weight, style)
-        if font:
-            return font
+        font_info = self.find_font(family, weight, style)
+        if font_info:
+            return font_info
     return None
 ```
 
@@ -960,12 +1061,11 @@ Support variable fonts (OpenType Variable Fonts) with custom axis values:
 def find_variable_font(
     self,
     family: str,
-    size: int,
     weight: int | None = None,
     width: int | None = None,  # Variable axis
     style: str = "normal",
-) -> ImageFont.FreeTypeFont | None:
-    """Find and configure variable font."""
+) -> FontInfo | None:
+    """Find variable font (returns FontInfo, variable axis configuration handled separately)."""
     ...
 ```
 
@@ -989,14 +1089,15 @@ This design was informed by practical implementations that demonstrated the viab
 - **Independence**: Standalone library with minimal framework dependencies
 - **Extensibility**: EntryPoints mechanism for third-party font packs
 - **Cross-platform**: Unified API across macOS, Linux, and Windows
-- **Required Dependencies**: fonttools (required for reliable font metadata extraction), PIL/Pillow (required for font loading)
+- **Required Dependencies**: fonttools (required for reliable font metadata extraction)
+- **Optional Dependencies**: PIL/Pillow (required only for FontInfo.load() and load_font() methods)
 
 ## 12. Example Usage
 
 ### 12.1 Basic Usage
 
 ```python
-from fontdiscovery import FontRegistry, get_default_registry
+from justmytype import FontRegistry, get_default_registry
 
 # Get default registry
 registry = get_default_registry()
@@ -1017,7 +1118,7 @@ if font:
 ### 12.2 Custom Registry
 
 ```python
-from fontdiscovery import FontRegistry
+from justmytype import FontRegistry
 
 # Create custom registry
 registry = FontRegistry()
@@ -1028,7 +1129,9 @@ custom_fonts = Path.home() / "custom_fonts"
 # (Would need API extension to add directories)
 
 # Use registry
-font = registry.find_font("CustomFont", size=12)
+font_info = registry.find_font("CustomFont")
+if font_info:
+    font = font_info.load(size=12)
 ```
 
 ### 12.3 Font Pack Implementation
