@@ -31,29 +31,31 @@ class ChainStore(ArtifactStore):
         self.l1 = l1 or MemoryStore()
         self.l2 = l2 or DiskStore()
 
-    def exists(self, digest: str) -> bool:
+    def exists(self, op_name: str, digest: str) -> bool:
         """Check if an artifact exists in L1 or L2.
 
         Args:
-            digest: The SHA-256 hash (64 character hex string) of the artifact.
+            op_name: The name of the operation that produced the artifact.
+            digest: The SHA-256 hash (64 character hex string) of the manifest.
 
         Returns:
             True if artifact exists in either store, False otherwise.
         """
         # Check L1 first (fast path)
-        if self.l1.exists(digest):
+        if self.l1.exists(op_name, digest):
             return True
         # Check L2 (slower, but persistent)
-        return self.l2.exists(digest)
+        return self.l2.exists(op_name, digest)
 
-    def get(self, digest: str) -> ICacheable:
+    def get(self, op_name: str, digest: str) -> ICacheable:
         """Retrieve an artifact from L1 or L2.
 
         If found in L2 but not L1, promotes the artifact to L1 for faster
         subsequent access.
 
         Args:
-            digest: The SHA-256 hash (64 character hex string) of the artifact.
+            op_name: The name of the operation that produced the artifact.
+            digest: The SHA-256 hash (64 character hex string) of the manifest.
 
         Returns:
             The deserialized ICacheable artifact.
@@ -62,26 +64,29 @@ class ChainStore(ArtifactStore):
             KeyError: If artifact does not exist in either store.
         """
         # Try L1 first (fast path)
-        if self.l1.exists(digest):
-            return self.l1.get(digest)
+        if self.l1.exists(op_name, digest):
+            return self.l1.get(op_name, digest)
 
         # Try L2 (slower, but persistent)
-        if self.l2.exists(digest):
+        if self.l2.exists(op_name, digest):
             # Promote to L1 for faster subsequent access
-            artifact = self.l2.get(digest)
-            self.l1.put(digest, artifact)
+            artifact = self.l2.get(op_name, digest)
+            self.l1.put(op_name, digest, artifact)
             return artifact
 
         # Not found in either store
-        raise KeyError(f"Artifact with digest '{digest}' not found in L1 or L2")
+        raise KeyError(
+            f"Artifact with op_name '{op_name}' and digest '{digest}' not found in L1 or L2"
+        )
 
-    def put(self, digest: str, artifact: ICacheable) -> None:
+    def put(self, op_name: str, digest: str, artifact: ICacheable) -> None:
         """Store an artifact in both L1 and L2.
 
         Args:
-            digest: The SHA-256 hash (64 character hex string) of the artifact.
+            op_name: The name of the operation that produced the artifact.
+            digest: The SHA-256 hash (64 character hex string) of the manifest.
             artifact: The ICacheable artifact to store.
         """
         # Write to both stores
-        self.l1.put(digest, artifact)
-        self.l2.put(digest, artifact)
+        self.l1.put(op_name, digest, artifact)
+        self.l2.put(op_name, digest, artifact)

@@ -36,85 +36,94 @@ class TestDiskStore:
     def test_get_path(self, temp_cache_dir):
         """Test _get_path method."""
         store = DiskStore(temp_cache_dir)
+        op_name = "test:op"
         digest = "a" * 64
-        path = store._get_path(digest)
-        assert path.parent.name == "aa"
+        path = store._get_path(op_name, digest)
+        assert "test_op" in str(path.parent)
         assert path.name == "a" * 62
 
     def test_get_path_invalid_digest(self, temp_cache_dir):
         """Test _get_path with invalid digest length."""
         store = DiskStore(temp_cache_dir)
+        op_name = "test:op"
         with pytest.raises(ValueError, match="Invalid digest length"):
-            store._get_path("short")
+            store._get_path(op_name, "short")
 
     def test_exists_false(self, temp_cache_dir):
         """Test exists returns False for non-existent artifact."""
         store = DiskStore(temp_cache_dir)
-        assert not store.exists("a" * 64)
+        op_name = "test:op"
+        assert not store.exists(op_name, "a" * 64)
 
     def test_put_and_get(self, temp_cache_dir):
         """Test storing and retrieving an artifact."""
         store = DiskStore(temp_cache_dir)
+        op_name = "test:op"
         artifact = String("test")
         digest = artifact.get_stable_hash()
 
-        store.put(digest, artifact)
-        assert store.exists(digest)
+        store.put(op_name, digest, artifact)
+        assert store.exists(op_name, digest)
 
-        retrieved = store.get(digest)
+        retrieved = store.get(op_name, digest)
         assert isinstance(retrieved, String)
         assert retrieved.value == "test"
 
     def test_get_nonexistent(self, temp_cache_dir):
         """Test that getting non-existent artifact raises KeyError."""
         store = DiskStore(temp_cache_dir)
+        op_name = "test:op"
         with pytest.raises(KeyError):
-            store.get("a" * 64)
+            store.get(op_name, "a" * 64)
 
     def test_put_and_get_integer(self, temp_cache_dir):
         """Test storing and retrieving Integer."""
         store = DiskStore(temp_cache_dir)
+        op_name = "test:op"
         artifact = Integer(42)
         digest = artifact.get_stable_hash()
 
-        store.put(digest, artifact)
-        retrieved = store.get(digest)
+        store.put(op_name, digest, artifact)
+        retrieved = store.get(op_name, digest)
         assert isinstance(retrieved, Integer)
         assert retrieved.value == 42
 
     def test_put_and_get_decimal(self, temp_cache_dir):
         """Test storing and retrieving DecimalValue."""
         store = DiskStore(temp_cache_dir)
+        op_name = "test:op"
         artifact = DecimalValue("3.14159")
         digest = artifact.get_stable_hash()
 
-        store.put(digest, artifact)
-        retrieved = store.get(digest)
+        store.put(op_name, digest, artifact)
+        retrieved = store.get(op_name, digest)
         assert isinstance(retrieved, DecimalValue)
         assert retrieved.value == artifact.value
 
     def test_persistence(self, temp_cache_dir):
         """Test that artifacts persist across store instances."""
         store1 = DiskStore(temp_cache_dir)
+        op_name = "test:op"
         artifact = String("persistent")
         digest = artifact.get_stable_hash()
 
-        store1.put(digest, artifact)
+        store1.put(op_name, digest, artifact)
 
         # Create new store instance
         store2 = DiskStore(temp_cache_dir)
-        assert store2.exists(digest)
-        retrieved = store2.get(digest)
+        assert store2.exists(op_name, digest)
+        retrieved = store2.get(op_name, digest)
         assert retrieved.value == "persistent"
 
     def test_atomic_write(self, temp_cache_dir):
         """Test that writes are atomic (use temp file then rename)."""
         store = DiskStore(temp_cache_dir)
+        op_name = "test:op"
         artifact = String("atomic")
         digest = artifact.get_stable_hash()
 
         # This should not leave a .tmp file
-        store.put(digest, artifact)
+        store.put(op_name, digest, artifact)
 
         # Check no .tmp files exist
         tmp_files = list(temp_cache_dir.rglob("*.tmp"))
@@ -123,13 +132,14 @@ class TestDiskStore:
     def test_directory_structure(self, temp_cache_dir):
         """Test that directory structure is created correctly."""
         store = DiskStore(temp_cache_dir)
+        op_name = "test:op"
         artifact = String("test")
         digest = artifact.get_stable_hash()
 
-        store.put(digest, artifact)
+        store.put(op_name, digest, artifact)
 
-        # Check directory structure: {digest[:2]}/{digest[2:]}
-        expected_dir = temp_cache_dir / digest[:2]
+        # Check directory structure: {op_name}/{digest[:2]}/{digest[2:]}
+        expected_dir = temp_cache_dir / "test_op" / digest[:2]
         assert expected_dir.exists()
         expected_file = expected_dir / digest[2:]
         assert expected_file.exists()

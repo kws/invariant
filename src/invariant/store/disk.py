@@ -31,10 +31,11 @@ class DiskStore(ArtifactStore):
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-    def _get_path(self, digest: str) -> Path:
-        """Get filesystem path for a digest.
+    def _get_path(self, op_name: str, digest: str) -> Path:
+        """Get filesystem path for an operation and digest.
 
         Args:
+            op_name: The name of the operation.
             digest: The SHA-256 hash (64 character hex string).
 
         Returns:
@@ -43,26 +44,31 @@ class DiskStore(ArtifactStore):
         if len(digest) != 64:
             raise ValueError(f"Invalid digest length: {len(digest)}, expected 64")
 
-        # Two-level directory structure: first 2 chars, then remaining 62 chars
-        dir_path = self.cache_dir / digest[:2]
+        # Sanitize op_name for filesystem (replace : with _)
+        safe_op_name = op_name.replace(":", "_").replace("/", "_")
+
+        # Three-level directory structure: op_name / first 2 chars / remaining 62 chars
+        dir_path = self.cache_dir / safe_op_name / digest[:2]
         file_path = dir_path / digest[2:]
         return file_path
 
-    def exists(self, digest: str) -> bool:
+    def exists(self, op_name: str, digest: str) -> bool:
         """Check if an artifact exists."""
-        path = self._get_path(digest)
+        path = self._get_path(op_name, digest)
         return path.exists()
 
-    def get(self, digest: str) -> ICacheable:
-        """Retrieve an artifact by digest.
+    def get(self, op_name: str, digest: str) -> ICacheable:
+        """Retrieve an artifact by operation name and digest.
 
         Raises:
             KeyError: If artifact does not exist.
         """
-        path = self._get_path(digest)
+        path = self._get_path(op_name, digest)
 
         if not path.exists():
-            raise KeyError(f"Artifact with digest '{digest}' not found")
+            raise KeyError(
+                f"Artifact with op_name '{op_name}' and digest '{digest}' not found"
+            )
 
         # Read file
         with open(path, "rb") as f:
@@ -83,9 +89,9 @@ class DiskStore(ArtifactStore):
         stream = BytesIO(serialized_data)
         return cls.from_stream(stream)
 
-    def put(self, digest: str, artifact: ICacheable) -> None:
-        """Store an artifact with the given digest."""
-        path = self._get_path(digest)
+    def put(self, op_name: str, digest: str, artifact: ICacheable) -> None:
+        """Store an artifact with the given operation name and digest."""
+        path = self._get_path(op_name, digest)
 
         # Create parent directory if needed
         path.parent.mkdir(parents=True, exist_ok=True)

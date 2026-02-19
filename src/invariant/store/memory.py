@@ -17,21 +17,29 @@ class MemoryStore(ArtifactStore):
         """Initialize an empty memory store."""
         self._artifacts: dict[str, bytes] = {}
 
-    def exists(self, digest: str) -> bool:
-        """Check if an artifact exists."""
-        return digest in self._artifacts
+    def _make_key(self, op_name: str, digest: str) -> str:
+        """Create a composite key from op_name and digest."""
+        return f"{op_name}:{digest}"
 
-    def get(self, digest: str) -> ICacheable:
-        """Retrieve an artifact by digest.
+    def exists(self, op_name: str, digest: str) -> bool:
+        """Check if an artifact exists."""
+        key = self._make_key(op_name, digest)
+        return key in self._artifacts
+
+    def get(self, op_name: str, digest: str) -> ICacheable:
+        """Retrieve an artifact by operation name and digest.
 
         Raises:
             KeyError: If artifact does not exist.
         """
-        if digest not in self._artifacts:
-            raise KeyError(f"Artifact with digest '{digest}' not found")
+        key = self._make_key(op_name, digest)
+        if key not in self._artifacts:
+            raise KeyError(
+                f"Artifact with op_name '{op_name}' and digest '{digest}' not found"
+            )
 
         # Deserialize from stored bytes
-        data = self._artifacts[digest]
+        data = self._artifacts[key]
         stream = BytesIO(data)
 
         # We need to know the type to deserialize. For now, we'll store
@@ -134,8 +142,8 @@ class MemoryStore(ArtifactStore):
         stream = BytesIO(serialized_data)
         return cls.from_stream(stream)
 
-    def put(self, digest: str, artifact: ICacheable) -> None:
-        """Store an artifact with the given digest."""
+    def put(self, op_name: str, digest: str, artifact: ICacheable) -> None:
+        """Store an artifact with the given operation name and digest."""
         # Serialize the artifact
         stream = BytesIO()
         artifact.to_stream(stream)
@@ -153,7 +161,8 @@ class MemoryStore(ArtifactStore):
             + serialized_data
         )
 
-        self._artifacts[digest] = combined
+        key = self._make_key(op_name, digest)
+        self._artifacts[key] = combined
 
     def clear(self) -> None:
         """Clear all artifacts (mainly for testing)."""
