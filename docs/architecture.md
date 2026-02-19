@@ -96,12 +96,12 @@ The engine traverses the user-defined DAG. For each Node, it resolves inputs to 
 ### **Phase 2: Action Execution (Manifest \-\> Artifact)**
 
 * **Step 1: Cache Lookup**  
-  * Engine checks ArtifactStore.exists(Digest).  
+  * Engine checks ArtifactStore.exists(Op, Digest).  <- this is essential, artifact is the output of an operation for a particular input manifest. Antother operation could in theory get the same input manifest and would return a different result.
   * *If True:* Returns the stored Artifact. **Op is strictly skipped.**  
 * **Step 2: Execution**  
   * *If False:* Engine invokes OpRegistry.get(op\_name)(manifest).  
 * **Step 3: Persistence**  
-  * The resulting Artifact is serialized and saved to ArtifactStore under Digest.
+  * The resulting Artifact is serialized and saved to ArtifactStore under Operation and Digest.
 
 ## **5\. System Components**
 
@@ -138,3 +138,151 @@ The storage abstraction.
 2. **Engine Logic:** Build GraphResolver and Executor.  
 3. **Storage:** Implement DiskStore.  
 4. **Ops Standard Library:** Implement foundational Ops (dict manipulation, basic math) to prove the DAG.
+
+## **7\. Examples**
+
+**NOTE** This example is final. If something is not clear, make
+sure to clarify before changing any of the details below.
+
+* justmyresource:get, gfx:render_solid - these are operations. They are prefixed to avoid naming collisions, but ultimately that doesn't matter. They must be assigned to the operation register prior to the execution of the pipeline
+
+* "${root.width}", "${decimal(background.width) * decimal('0.75')}" - these are expressions that are evaluated against the declared dependencies of the node. Not declaring something referenced in these expressions will raise an error. 
+
+One could have a Node that simply evaluated an expression and returns the value - that is effectively what all of these nodes do:
+
+1. evaluate
+2. check hash
+3. fetch from cache or calculate
+4. store in cache new output
+
+
+```python
+from invariant import Node, Executor, OpRegistry
+from invariant.store.memory import MemoryStore
+
+# Define the graph
+graph = {
+    
+    "icon_blob": Node(
+        op_name="justmyresource:get",
+        params={
+            "name": "lucide:thermometer",
+        },
+        deps=[],
+    ),
+    
+    # Create background
+    "background": Node(
+        op_name="gfx:render_solid",
+        params={
+            "width": "${root.width}",
+            "height": "${root.height}",
+            "color": "#000000",
+        },
+        deps=["root"],
+    ),
+
+    # Render icon SVG to raster
+    "icon": Node(
+        op_name="gfx:render_svg",
+        params={
+            # Here we see complex expressions using dependencies
+            "width": "${decimal(background.width) * decimal('0.75')}",
+            "height": "${decimal(background.height) * decimal('0.75')}",
+            "svg": "${icon_blob.data}"
+        },
+        deps=["background", "icon_blob"],
+    ),
+    
+    # Composite onto background
+    "final": Node(
+        op_name="gfx:composite",
+        params={
+            "layers": [
+                {
+                    "id": "bg",
+                    "image": "${background.image}",
+                },
+                {
+                    "image": "${icon.image}",
+                    # Don't worry too much about this for now
+                    # The important thing here is that this is
+                    # internally evaluated in the gfx:composite
+                    # operation and simply treated as text for
+                    # the cache layer
+                    "pos": "align('bg', 'cc')"
+                },
+            ],
+        },
+        deps=["background", "icon"],
+    ),
+}
+
+registry = OpRegistry()
+# ... ops must be registered before execution ...
+store = MemoryStore()
+executor = Executor(registry=registry, store=store)
+
+root = {
+  "width": 144,
+  "height": 144,
+}
+results = executor.execute(graph, context={"root": root})
+final_image = results["final"]
+```
+
+### **7.1 External Dependencies (Context)**
+
+In the example above, the `"background"` node declares `deps=["root"]`, but `"root"` is not a node in the graph — it is an external input provided via the `context` parameter.
+
+No special node type is needed to distinguish external inputs from graph-internal dependencies. The rule is simple:
+
+* Any dependency that **is** a key in the graph is an **internal** dependency, resolved by executing that node first.
+* Any dependency that **is not** a key in the graph is an **external** dependency, and **must** be provided in `context`.
+* If a dependency is neither in the graph nor in `context`, execution fails with an error.
+
+The `Executor` injects context values into the resolved artifacts before the topological sort loop begins, making them available to any node that declares them as a dependency. From the node's perspective, there is no difference between consuming an internal artifact and consuming an external context value — both are accessed the same way via `${...}` expressions.
+
+### **7.2 Expression Language (CEL)**
+
+Invariant uses [CEL (Common Expression Language)](https://github.com/google/cel-spec) to evaluate `${...}` expressions in node parameters. CEL is a non-Turing-complete, side-effect-free expression language developed by Google, used in production systems including Kubernetes and Cloud IAM.
+
+#### **Why CEL**
+
+CEL enforces the same guarantees Invariant requires:
+
+* **No side effects:** Expressions cannot perform I/O, mutate state, or access globals.
+* **Guaranteed termination:** The language has no loops or recursion — every expression completes in bounded time.
+* **Deterministic:** The same inputs always produce the same output.
+
+These properties are intrinsic to the language, not constraints we impose on top of a general-purpose evaluator.
+
+#### **Expression Syntax**
+
+Expressions appear inside `${...}` delimiters within node parameter values. The content between the delimiters is a CEL expression. A parameter value without `${...}` is treated as a plain literal — no evaluation occurs.
+
+* `"${root.width}"` — evaluated as CEL, resolves field `width` from the `root` dependency.
+* `"#000000"` — plain string literal, passed through unchanged.
+* `"align('bg', 'cc')"` — also a plain string literal (no `${}`), interpreted by the Op itself, not by the expression engine.
+
+#### **Execution Scope**
+
+When a `${...}` expression is evaluated, the following is available:
+
+| Available | Description |
+| :---- | :---- |
+| **Dependency artifacts** | Each node ID declared in `deps` is available as a variable. Artifacts are exposed as CEL maps — field access (e.g., `background.width`) reads properties from the artifact. |
+| **`decimal(value)`** | Custom function. Constructs a Decimal from an `int` or `string`. Fractional values **must** use string form (e.g., `decimal('0.75')`) per the Strict Numeric Policy. |
+| **Standard CEL operators** | Arithmetic (`+`, `-`, `*`, `/`, `%`), comparison (`==`, `!=`, `<`, `>`, `<=`, `>=`), logical (`&&`, `\|\|`, `!`), ternary (`condition ? a : b`), string functions (`size`, `contains`, `startsWith`, `endsWith`, `matches`), list/map operations (`in`, `size`, indexing). |
+
+The following is **not** available and will produce an error:
+
+| Forbidden | Reason |
+| :---- | :---- |
+| **Undeclared dependencies** | Referencing a node ID not listed in `deps` is an error, even if that node exists in the graph. This ensures the dependency graph is explicit. |
+| **`double` results** | An expression whose final result is a floating-point value is rejected at the manifest boundary. Use `decimal()` for fractional arithmetic. |
+| **External state** | CEL cannot access the filesystem, network, system clock, or any state outside the expression scope. This is enforced by the language itself. |
+
+#### **Evaluation Timing**
+
+Expressions are evaluated during **Phase 1 (Context Resolution)**, when the Executor builds the Manifest for each node. The resolved value replaces the `${...}` in the parameter, and the complete Manifest is then hashed to produce the Digest. The expression itself is never cached — only its resolved result matters for cache identity.
