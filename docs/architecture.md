@@ -376,23 +376,13 @@ flowchart TD
 
 ```python
 from invariant import Node, Executor, OpRegistry
+from invariant.ops import poly
 from invariant.store.memory import MemoryStore
 from invariant.types import Integer
-from invariant.ops.poly import (
-    poly_from_coefficients,
-    poly_add,
-    poly_multiply,
-    poly_evaluate,
-    poly_derivative,
-)
 
 # Register polynomial operations
 registry = OpRegistry()
-registry.register("poly:from_coefficients", poly_from_coefficients)
-registry.register("poly:add", poly_add)
-registry.register("poly:multiply", poly_multiply)
-registry.register("poly:evaluate", poly_evaluate)
-registry.register("poly:derivative", poly_derivative)
+registry.register_package("poly", poly)
 
 # Define the graph
 graph = {

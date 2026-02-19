@@ -1,13 +1,7 @@
 """End-to-end tests for polynomial operations pipeline."""
 
 from invariant import Executor, Node, OpRegistry
-from invariant.ops.poly import (
-    poly_add,
-    poly_derivative,
-    poly_evaluate,
-    poly_from_coefficients,
-    poly_multiply,
-)
+from invariant.ops import poly
 from invariant.store.memory import MemoryStore
 from invariant.types import Integer
 
@@ -17,11 +11,7 @@ def test_distributive_law_pipeline():
     # Register polynomial operations
     registry = OpRegistry()
     registry.clear()  # Clear singleton state
-    registry.register("poly:from_coefficients", poly_from_coefficients)
-    registry.register("poly:add", poly_add)
-    registry.register("poly:multiply", poly_multiply)
-    registry.register("poly:evaluate", poly_evaluate)
-    registry.register("poly:derivative", poly_derivative)
+    registry.register_package("poly", poly)
 
     # Define the graph from section 8.5 of architecture spec
     graph = {
@@ -115,8 +105,7 @@ def test_cache_reuse():
     """Test that running the same graph twice skips all ops on the second run."""
     registry = OpRegistry()
     registry.clear()  # Clear singleton state
-    registry.register("poly:from_coefficients", poly_from_coefficients)
-    registry.register("poly:add", poly_add)
+    registry.register_package("poly", poly)
 
     graph = {
         "p": Node(
