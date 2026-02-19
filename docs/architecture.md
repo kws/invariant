@@ -110,6 +110,8 @@ The engine traverses the user-defined DAG. For each Node, it resolves inputs to 
 A singleton registry mapping string identifiers to executable Python callables.
 
 * *Role:* Decouples the "string" name in the YAML/JSON definition from the actual Python code.
+* *Package Registration:* Supports grouping related operations into packages via `register_package(prefix, ops)`, which registers all ops from a package under a common prefix (e.g., `"poly:add"`, `"poly:multiply"`).
+* *Auto-Discovery:* The `auto_discover()` method automatically discovers and registers op packages from Python entry points (group `"invariant.ops"`), enabling third-party packages to provide operations without explicit registration.
 
 ### **5.2 Graph Resolver**
 
@@ -130,7 +132,8 @@ The storage abstraction.
 * *Implementations:*  
   * MemoryStore: fast, ephemeral (testing).  
   * DiskStore: local filesystem (.invariant/cache/).  
-  * CloudStore: S3/GCS buckets for shared team caches.
+  * ChainStore: composite two-tier cache chaining MemoryStore (L1) and DiskStore (L2), with automatic promotion from L2 to L1 on cache hits.  
+  * CloudStore: planned for S3/GCS buckets for shared team caches (not yet implemented).
 
 ## **6\. Development Stages**
 

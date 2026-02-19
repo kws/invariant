@@ -15,7 +15,7 @@ A Python-based deterministic execution engine for directed acyclic graphs (DAGs)
 ```bash
 # Clone the repository
 git clone <repository-url>
-cd immutable
+cd invariant
 
 # Install dependencies
 poetry install
@@ -25,24 +25,23 @@ poetry install
 
 ```python
 from invariant import Executor, Node, OpRegistry
-from invariant.store import MemoryStore
+from invariant.ops import stdlib
+from invariant.store.memory import MemoryStore
 from invariant.types import Integer, String
-from invariant.ops import add, identity
 
 # Create registry and register operations
 registry = OpRegistry()
-registry.register("identity", identity)
-registry.register("add", add)
+registry.register_package("stdlib", stdlib)
 
 # Create a simple graph: a -> b
 graph = {
     "a": Node(
-        op_name="identity",
+        op_name="stdlib:identity",
         params={"value": String("hello")},
         deps=[]
     ),
     "b": Node(
-        op_name="add",
+        op_name="stdlib:add",
         params={"a": Integer(1), "b": Integer(2)},
         deps=["a"]
     ),
@@ -50,7 +49,7 @@ graph = {
 
 # Execute the graph
 store = MemoryStore()
-executor = Executor(registry, store)
+executor = Executor(registry=registry, store=store)
 results = executor.execute(graph)
 
 print(results["a"].value)  # "hello"
