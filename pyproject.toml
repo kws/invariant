@@ -12,6 +12,9 @@ dependencies = [
     "cel-python (>=0.5.0,<0.6.0)"
 ]
 
+[project.entry-points."invariant.ops"]
+poly = "invariant.ops.poly:OPS"
+stdlib = "invariant.ops.stdlib:OPS"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
