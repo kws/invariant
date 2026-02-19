@@ -306,3 +306,14 @@ def _multiply_polynomials(a: Polynomial, b: Polynomial) -> Polynomial:
             result_coeffs[i + j] += coeff_a * coeff_b
 
     return Polynomial(tuple(result_coeffs))
+
+
+# Package of polynomial operations
+OPS: dict[str, Any] = {
+    "from_coefficients": poly_from_coefficients,
+    "add": poly_add,
+    "multiply": poly_multiply,
+    "evaluate": poly_evaluate,
+    "scale": poly_scale,
+    "derivative": poly_derivative,
+}

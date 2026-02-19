@@ -1,5 +1,6 @@
 """Standard operations library."""
 
+from invariant.ops import poly, stdlib
 from invariant.ops.stdlib import (
     add,
     dict_get,
@@ -11,6 +12,8 @@ from invariant.ops.stdlib import (
 )
 
 __all__ = [
+    "poly",
+    "stdlib",
     "identity",
     "add",
     "multiply",

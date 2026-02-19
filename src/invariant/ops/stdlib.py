@@ -260,3 +260,15 @@ def _extract_numeric(value: Any, name: str) -> int | Decimal:
         raise TypeError(
             f"{name} must be numeric (Integer, DecimalValue, int, or Decimal), got {type(value)}"
         )
+
+
+# Package of standard operations
+OPS: dict[str, Any] = {
+    "identity": identity,
+    "add": add,
+    "multiply": multiply,
+    "from_integer": from_integer,
+    "dict_get": dict_get,
+    "dict_merge": dict_merge,
+    "list_append": list_append,
+}
