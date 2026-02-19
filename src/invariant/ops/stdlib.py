@@ -199,6 +199,33 @@ def list_append(manifest: dict[str, Any]) -> ICacheable:
     )
 
 
+def from_integer(manifest: dict[str, Any]) -> ICacheable:
+    """Create an Integer from an integer value.
+
+    Args:
+        manifest: Must contain 'value' key with an integer value.
+
+    Returns:
+        Integer wrapping the value.
+
+    Raises:
+        KeyError: If 'value' key is missing.
+        TypeError: If value is not an integer.
+    """
+    if "value" not in manifest:
+        raise KeyError("stdlib:from_integer op requires 'value' in manifest")
+
+    value = manifest["value"]
+    if isinstance(value, Integer):
+        return value
+    elif isinstance(value, int):
+        return Integer(value)
+    else:
+        raise TypeError(
+            f"stdlib:from_integer op requires int or Integer value, got {type(value)}"
+        )
+
+
 def _extract_numeric(value: Any, name: str) -> int | Decimal:
     """Extract numeric value from various types.
 
