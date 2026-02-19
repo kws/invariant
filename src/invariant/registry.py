@@ -1,8 +1,13 @@
 """OpRegistry for mapping operation names to callables."""
 
+import types
+from importlib.metadata import entry_points
 from typing import Any, Callable
 
 from invariant.protocol import ICacheable
+
+# Type alias for op packages: dict mapping short names to op callables
+OpPackage = dict[str, Callable[[dict[str, Any]], ICacheable]]
 
 
 class OpRegistry:
@@ -73,3 +78,86 @@ class OpRegistry:
     def clear(self) -> None:
         """Clear all registered operations (mainly for testing)."""
         self._ops.clear()
+
+    def register_package(self, prefix: str, ops: OpPackage | Any) -> None:
+        """Register all ops from a package under a common prefix.
+
+        Args:
+            prefix: The namespace prefix (e.g. "poly").
+            ops: Either a dict mapping short names to callables (OpPackage),
+                 or a Python module that has an OPS dict attribute.
+
+        Raises:
+            ValueError: If prefix is empty, ops is invalid, or any operation
+                name is already registered.
+            AttributeError: If ops is a module but doesn't have an OPS attribute.
+        """
+        if not prefix:
+            raise ValueError("Package prefix cannot be empty")
+
+        # Extract the ops dict from the input
+        ops_dict: OpPackage
+        if isinstance(ops, dict):
+            ops_dict = ops
+        elif isinstance(ops, types.ModuleType):
+            # It's a module - check for OPS attribute
+            if not hasattr(ops, "OPS"):
+                raise AttributeError(
+                    f"Module {ops.__name__} does not have an OPS attribute"
+                )
+            ops_dict = ops.OPS
+            if not isinstance(ops_dict, dict):
+                raise ValueError(f"OPS attribute must be a dict, got {type(ops_dict)}")
+        elif hasattr(ops, "OPS"):
+            # Object with OPS attribute (not a module)
+            ops_dict = ops.OPS
+            if not isinstance(ops_dict, dict):
+                raise ValueError(f"OPS attribute must be a dict, got {type(ops_dict)}")
+        else:
+            raise ValueError(
+                f"ops must be a dict or module with OPS attribute, got {type(ops)}"
+            )
+
+        # Register each op with the prefix
+        for name, op in ops_dict.items():
+            full_name = f"{prefix}:{name}"
+            self.register(full_name, op)
+
+    def auto_discover(self) -> None:
+        """Discover and register op packages from entry points.
+
+        Scans the 'invariant.ops' entry point group. Each entry point
+        should resolve to either:
+          - A dict[str, Callable] (the OPS dict directly)
+          - A callable that returns such a dict
+
+        The entry point name becomes the package prefix.
+
+        Raises:
+            ValueError: If any operation name is already registered (via register_package).
+        """
+        eps = entry_points(group="invariant.ops")
+
+        for ep in eps:
+            try:
+                # Load the entry point
+                loaded = ep.load()
+
+                # Extract the ops dict
+                ops_dict: OpPackage
+                if isinstance(loaded, dict):
+                    ops_dict = loaded
+                elif callable(loaded):
+                    # Callable that returns the dict
+                    result = loaded()
+                    if not isinstance(result, dict):
+                        continue  # Skip invalid entry points
+                    ops_dict = result
+                else:
+                    continue  # Skip invalid entry points
+
+                # Register the package using the entry point name as prefix
+                self.register_package(ep.name, ops_dict)
+            except Exception:
+                # Skip invalid entry points silently
+                continue
