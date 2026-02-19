@@ -286,3 +286,263 @@ The following is **not** available and will produce an error:
 #### **Evaluation Timing**
 
 Expressions are evaluated during **Phase 1 (Context Resolution)**, when the Executor builds the Manifest for each node. The resolved value replaces the `${...}` in the parameter, and the complete Manifest is then hashed to produce the Digest. The expression itself is never cached — only its resolved result matters for cache identity.
+
+## **8\. Reference Test Pipeline**
+
+To validate Invariant's core capabilities—chains, branches, merges, and deduplication—we need a reference test case that exercises complex DAG structures without requiring external dependencies. **Polynomial arithmetic over integers** serves as an ideal reference implementation.
+
+### **8.1 Why Polynomials**
+
+Polynomial arithmetic is well-suited for testing Invariant because:
+
+* **All integer arithmetic** — coefficients are lists of `int`, satisfying the Strict Numeric Policy with zero `float` involvement.
+* **Pure functions** — every operation (add, multiply, derive, evaluate) is deterministic and side-effect-free.
+* **Natural DAG structure** — verifying algebraic identities (e.g., the distributive law) requires chains, fan-out, fan-in, and re-convergence.
+* **Non-trivial cost** — polynomial multiplication is O(n*m) convolution, making caching meaningful even in a test.
+* **No external dependencies** — everything is `int` lists and basic loops.
+
+### **8.2 Polynomial Type Specification**
+
+A `Polynomial` type implements `ICacheable` and wraps a `tuple[int, ...]` of coefficients, where the index represents the degree (coefficient at index `i` is the coefficient of x^i).
+
+**Canonical Form:** Trailing zeros are stripped to ensure a unique representation. For example, `[1, 2, 0, 0]` is canonicalized to `[1, 2]`.
+
+**ICacheable Implementation:**
+
+* `get_stable_hash()`: Returns SHA-256 hash of the canonical coefficient tuple.
+* `to_stream()`: Serializes as length-prefixed sequence of 8-byte signed integers (big-endian).
+* `from_stream()`: Deserializes from the same format and strips trailing zeros.
+
+### **8.3 Polynomial Operations**
+
+The following operations are implemented as pure functions taking a manifest and returning an `ICacheable`:
+
+| Op Name | Inputs | Output | Notes |
+|:--|:--|:--|:--|
+| `poly:from_coefficients` | `coefficients: list[int]` | `Polynomial` | Strips trailing zeros for canonical form |
+| `poly:add` | `a: Polynomial, b: Polynomial` | `Polynomial` | Pairwise addition, zero-pad shorter polynomial |
+| `poly:multiply` | `a: Polynomial, b: Polynomial` | `Polynomial` | Convolution of coefficient lists |
+| `poly:scale` | `poly: Polynomial, scalar: Integer` | `Polynomial` | Multiply every coefficient by scalar |
+| `poly:derivative` | `poly: Polynomial` | `Polynomial` | `c[i] * i` shifted down one degree |
+| `poly:evaluate` | `poly: Polynomial, x: Integer` | `Integer` | Horner's method, pure integer result |
+
+All ops follow the existing stdlib pattern in [`src/invariant/ops/stdlib.py`](src/invariant/ops/stdlib.py), taking `manifest: dict[str, Any]` and returning `ICacheable`.
+
+### **8.4 Reference DAG: Distributive-Law Verification**
+
+The test pipeline verifies the algebraic identity **(p + q) * r == p*r + q*r** and evaluates both sides at a point to confirm numeric equality.
+
+```mermaid
+flowchart TD
+    subgraph inputs [Inputs]
+        pCoeffs["p_coeffs: from_coefficients [1, 2, 1]"]
+        qCoeffs["q_coeffs: from_coefficients [3, 0, -1]"]
+        rCoeffs["r_coeffs: from_coefficients [1, 1]"]
+    end
+
+    subgraph leftBranch [Left Branch: chain then merge]
+        pqSum["p_plus_q: poly:add(p, q)"]
+        lhsMul["lhs: poly:multiply(p_plus_q, r)"]
+    end
+
+    subgraph rightBranch [Right Branch: fan-out then merge]
+        prMul["pr: poly:multiply(p, r)"]
+        qrMul["qr: poly:multiply(q, r)"]
+        rhsSum["rhs: poly:add(pr, qr)"]
+    end
+
+    subgraph evaluate [Evaluate both at x=5]
+        evalLhs["eval_lhs: poly:evaluate(lhs, 5)"]
+        evalRhs["eval_rhs: poly:evaluate(rhs, 5)"]
+    end
+
+    pCoeffs --> pqSum
+    qCoeffs --> pqSum
+    pqSum --> lhsMul
+    rCoeffs --> lhsMul
+
+    pCoeffs --> prMul
+    rCoeffs --> prMul
+    qCoeffs --> qrMul
+    rCoeffs --> qrMul
+    prMul --> rhsSum
+    qrMul --> rhsSum
+
+    lhsMul --> evalLhs
+    rhsSum --> evalRhs
+```
+
+### **8.5 Complete Example**
+
+```python
+from invariant import Node, Executor, OpRegistry
+from invariant.store.memory import MemoryStore
+from invariant.types import Integer
+from invariant.ops.poly import (
+    poly_from_coefficients,
+    poly_add,
+    poly_multiply,
+    poly_evaluate,
+    poly_derivative,
+)
+
+# Register polynomial operations
+registry = OpRegistry()
+registry.register("poly:from_coefficients", poly_from_coefficients)
+registry.register("poly:add", poly_add)
+registry.register("poly:multiply", poly_multiply)
+registry.register("poly:evaluate", poly_evaluate)
+registry.register("poly:derivative", poly_derivative)
+
+# Define the graph
+graph = {
+    # Create polynomials from coefficient lists
+    "p": Node(
+        op_name="poly:from_coefficients",
+        params={"coefficients": [1, 2, 1]},  # x^2 + 2x + 1
+        deps=[],
+    ),
+    "q": Node(
+        op_name="poly:from_coefficients",
+        params={"coefficients": [3, 0, -1]},  # -x^2 + 3
+        deps=[],
+    ),
+    "r": Node(
+        op_name="poly:from_coefficients",
+        params={"coefficients": [1, 1]},  # x + 1
+        deps=[],
+    ),
+
+    # Left branch: (p + q) * r
+    "p_plus_q": Node(
+        op_name="poly:add",
+        params={},
+        deps=["p", "q"],
+    ),
+    "lhs": Node(
+        op_name="poly:multiply",
+        params={},
+        deps=["p_plus_q", "r"],
+    ),
+
+    # Right branch: p*r + q*r
+    "pr": Node(
+        op_name="poly:multiply",
+        params={},
+        deps=["p", "r"],
+    ),
+    "qr": Node(
+        op_name="poly:multiply",
+        params={},
+        deps=["q", "r"],
+    ),
+    "rhs": Node(
+        op_name="poly:add",
+        params={},
+        deps=["pr", "qr"],
+    ),
+
+    # Evaluate both sides at x=5
+    "eval_lhs": Node(
+        op_name="poly:evaluate",
+        params={"x": Integer(5)},
+        deps=["lhs"],
+    ),
+    "eval_rhs": Node(
+        op_name="poly:evaluate",
+        params={"x": Integer(5)},
+        deps=["rhs"],
+    ),
+
+    # Bonus: derivative chain
+    "d1": Node(
+        op_name="poly:derivative",
+        params={},
+        deps=["lhs"],
+    ),
+    "d2": Node(
+        op_name="poly:derivative",
+        params={},
+        deps=["d1"],
+    ),
+    "eval_d2": Node(
+        op_name="poly:evaluate",
+        params={"x": Integer(5)},
+        deps=["d2"],
+    ),
+}
+
+store = MemoryStore()
+executor = Executor(registry=registry, store=store)
+results = executor.execute(graph)
+
+# Verify distributive law: (p + q) * r == p*r + q*r
+assert results["lhs"].coefficients == results["rhs"].coefficients
+
+# Verify numeric equality at x=5
+assert results["eval_lhs"].value == results["eval_rhs"].value
+
+# Verify derivative chain
+# d2 should be the second derivative of lhs
+assert isinstance(results["eval_d2"], Integer)
+```
+
+### **8.6 Pipeline Features Exercised**
+
+| Pipeline Feature | Where It Appears | Notes |
+|:--|:--|:--|
+| **Chain** | `p -> p_plus_q -> lhs -> eval_lhs` | 3-deep linear chain |
+| **Branch (fan-out)** | `r` feeds `lhs`, `pr`, and `qr`; `p` feeds `p_plus_q` and `pr` | Single artifact used by multiple downstream nodes |
+| **Merge (fan-in)** | `rhs = poly:add(pr, qr)` | Two branches converge into one node |
+| **Deduplication** | If `p == q`, then `pr` and `qr` produce identical manifests | Same digest triggers single execution |
+| **Cache reuse** | Running the same graph twice skips all ops on the second run | All artifacts retrieved from cache |
+| **Deep chains** | `lhs -> d1 -> d2 -> eval_d2` | 4-deep chain with derivative operations |
+| **Re-entrant patterns** | `d1` and `eval_lhs` both depend on `lhs` | Same artifact reused across multiple paths |
+
+### **8.7 Pattern: Canonicalizing Commutative Inputs**
+
+For commutative operations like addition or multiplication, the order of operands does not affect the result, but it *does* affect the manifest hash. Consider two nodes computing the same sum with arguments in different order:
+
+* `add(x, y)` → manifest `{a: x_value, b: y_value}` → digest `abc123...`
+* `add(y, x)` → manifest `{a: y_value, b: x_value}` → digest `def456...` (cache miss!)
+
+The engine correctly treats these as distinct computations because it has no knowledge of commutativity. The manifest is an ordered dictionary, so different parameter orderings produce different digests, even when the mathematical result is identical.
+
+**Solution:** Use `min()` and `max()` in the `${...}` expressions to canonicalize operand order:
+
+```python
+graph = {
+    "x": Node(
+        op_name="stdlib:from_integer",
+        params={"value": 7},
+        deps=[],
+    ),
+    "y": Node(
+        op_name="stdlib:from_integer",
+        params={"value": 3},
+        deps=[],
+    ),
+
+    # First node: explicitly uses x, y order
+    "sum_xy": Node(
+        op_name="stdlib:add",
+        params={"a": "${min(x, y)}", "b": "${max(x, y)}"},
+        deps=["x", "y"],
+    ),
+
+    # Second node: uses y, x order in expressions — same result!
+    "sum_yx": Node(
+        op_name="stdlib:add",
+        params={"a": "${min(y, x)}", "b": "${max(y, x)}"},
+        deps=["x", "y"],
+    ),
+}
+
+# Both sum_xy and sum_yx resolve to manifest {a: 3, b: 7}
+# Same digest -> single execution, cache hit for the second node
+```
+
+Both nodes resolve to the same manifest `{a: 3, b: 7}` because `min(x, y)` and `min(y, x)` both evaluate to `3`, and `max(x, y)` and `max(y, x)` both evaluate to `7`. The canonical ordering ensures cache hits regardless of how the dependencies are declared or referenced in expressions.
+
+**Note:** `min()` and `max()` are custom CEL functions registered alongside `decimal()`, available in the expression evaluation scope. They work with any comparable types (integers, decimals, strings) and ensure deterministic canonicalization for commutative operations.
+
