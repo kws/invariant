@@ -3,7 +3,7 @@
 This example demonstrates Invariant's core capabilities using polynomial arithmetic
 to verify the algebraic identity: (p + q) * r == p*r + q*r
 
-From section 8.5 of the architecture specification.
+See examples/README.md for a detailed walkthrough and DAG diagram.
 """
 
 import argparse

@@ -4,7 +4,7 @@ This example demonstrates how to use min() and max() CEL functions to
 canonicalize operand order for commutative operations, ensuring cache hits
 regardless of how dependencies are declared or referenced.
 
-From section 8.7 of the architecture specification.
+See examples/README.md for a detailed walkthrough.
 """
 
 import argparse

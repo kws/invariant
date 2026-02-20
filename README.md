@@ -79,6 +79,7 @@ Invariant separates graph definition from execution in two phases:
 | [docs/architecture.md](docs/architecture.md) | System overview, design philosophy, and reference test pipeline |
 | [docs/expressions.md](docs/expressions.md) | **Normative reference** for `ref()`, `cel()`, `${...}` parameter markers and the CEL expression language |
 | [docs/executor.md](docs/executor.md) | **Normative reference** for the two-phase execution model, caching, and artifact storage |
+| [examples/README.md](examples/README.md) | Runnable examples with walkthroughs, DAG diagrams, and run instructions |
 | [AGENTS.md](AGENTS.md) | Quick-start guide for AI agents working with this codebase |
 
 ## Development
