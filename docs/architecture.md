@@ -79,6 +79,8 @@ class ICacheable(Protocol):
 
 ## **4\. Execution Architecture**
 
+> **Normative references:** The execution model is fully specified in [executor.md](./executor.md). The expression and parameter marker system is fully specified in [expressions.md](./expressions.md). Those documents are the source of truth; this section provides a high-level overview. Where this document and the normative references disagree, see the Implementation Flags sections in the normative references.
+
 The execution flow is split into two distinct phases to maximize cache hits.
 
 ### **Phase 1: Context Resolution (Graph \-\> Manifest)**
@@ -257,6 +259,8 @@ No special node type is needed to distinguish external inputs from graph-interna
 The `Executor` injects context values into the resolved artifacts before the topological sort loop begins, making them available to any node that declares them as a dependency. From the node's perspective, there is no difference between consuming an internal artifact and consuming an external context value — both are accessed the same way via `ref()`, `cel()`, or `${...}` expressions.
 
 ### **7.2 Parameter Markers and Expression Language**
+
+> **Normative reference:** See [expressions.md](./expressions.md) for the complete specification of parameter markers and the CEL expression language, including all built-in functions, type conversion rules, error cases, and implementation flags.
 
 Invariant provides three explicit mechanisms for parameter values, each with a clear purpose:
 

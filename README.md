@@ -72,9 +72,14 @@ Invariant separates graph definition from execution in two phases:
 1. **Phase 1: Context Resolution** - Builds input manifests for each node
 2. **Phase 2: Action Execution** - Executes operations or retrieves from cache
 
-For detailed architecture documentation, see [docs/architecture.md](docs/architecture.md).
+### Documentation
 
-For AI agents working with this codebase, see [AGENTS.md](AGENTS.md).
+| Document | Description |
+|:--|:--|
+| [docs/architecture.md](docs/architecture.md) | System overview, design philosophy, and reference test pipeline |
+| [docs/expressions.md](docs/expressions.md) | **Normative reference** for `ref()`, `cel()`, `${...}` parameter markers and the CEL expression language |
+| [docs/executor.md](docs/executor.md) | **Normative reference** for the two-phase execution model, caching, and artifact storage |
+| [AGENTS.md](AGENTS.md) | Quick-start guide for AI agents working with this codebase |
 
 ## Development
 

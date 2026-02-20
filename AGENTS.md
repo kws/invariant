@@ -62,6 +62,8 @@ class ICacheable(Protocol):
 
 ## **Execution Model: Two Phases**
 
+For each node in topological order, the executor runs two phases. For the complete normative reference, see [docs/executor.md](./docs/executor.md).
+
 ### **Phase 1: Context Resolution (Graph → Manifest)**
 1. Traverse DAG, resolve param markers (`ref()`, `cel()`, `${...}`) for each Node
 2. `ref("dep")` → resolves to ICacheable artifact from dependency
@@ -94,7 +96,7 @@ class ICacheable(Protocol):
 
 ## **Parameter Markers**
 
-Node params support three explicit mechanisms:
+Node params support three explicit mechanisms. For the complete normative reference, see [docs/expressions.md](./docs/expressions.md).
 
 | Marker | Purpose | Example |
 |:--|:--|:--|
@@ -107,9 +109,9 @@ Node params support three explicit mechanisms:
 
 ## **For More Information**
 
-See [architecture.md](./architecture.md) for:
-- Detailed design philosophy and influences
-- Complete protocol specifications
-- Development roadmap
-- Extended examples and use cases
+| Document | Description |
+|:--|:--|
+| [docs/expressions.md](./docs/expressions.md) | **Normative reference** for parameter markers (`ref`, `cel`, `${...}`) and the CEL expression language |
+| [docs/executor.md](./docs/executor.md) | **Normative reference** for the two-phase execution model, caching, type unwrapping, and artifact storage |
+| [architecture.md](./architecture.md) | Design philosophy, protocol specifications, and reference test pipeline |
 

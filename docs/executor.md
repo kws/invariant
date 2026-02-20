@@ -1,0 +1,641 @@
+# Executor Reference
+
+This document is the normative reference for Invariant's execution model — the two-phase pipeline that transforms a DAG of Nodes into cached Artifacts. It covers graph validation, manifest construction, cache lookup, operation invocation, and artifact storage.
+
+**Source of truth:** This document. If other documentation (AGENTS.md, README.md, architecture.md) conflicts with this reference, this document takes precedence.
+
+---
+
+## Table of Contents
+
+1. [Overview](#1-overview)
+2. [Two-Phase Execution Model](#2-two-phase-execution-model)
+3. [Phase 1: Context Resolution](#3-phase-1-context-resolution)
+   - [Graph Validation](#31-graph-validation)
+   - [Topological Sort](#32-topological-sort)
+   - [Manifest Construction](#33-manifest-construction)
+   - [Digest Computation](#34-digest-computation)
+4. [Phase 2: Action Execution](#4-phase-2-action-execution)
+   - [Cache Lookup and Deduplication](#41-cache-lookup-and-deduplication)
+   - [Operation Invocation](#42-operation-invocation)
+   - [Type Unwrapping](#43-type-unwrapping)
+   - [Return Value Validation and Wrapping](#44-return-value-validation-and-wrapping)
+   - [Artifact Persistence](#45-artifact-persistence)
+5. [External Dependencies (Context)](#5-external-dependencies-context)
+6. [Graph Resolver](#6-graph-resolver)
+7. [Artifact Store](#7-artifact-store)
+   - [Store Interface](#71-store-interface)
+   - [MemoryStore](#72-memorystore)
+   - [DiskStore](#73-diskstore)
+   - [ChainStore](#74-chainstore)
+8. [Op Registry](#8-op-registry)
+9. [Cacheable Type Universe](#9-cacheable-type-universe)
+10. [Examples](#10-examples)
+11. [Implementation Flags](#11-implementation-flags)
+
+---
+
+## 1. Overview
+
+The `Executor` is the runtime engine that takes a graph of `Node` objects and produces a dictionary of `ICacheable` artifacts. Its primary goals are:
+
+- **Cache-first execution:** Skip operations when cached results exist
+- **Deduplication:** Execute identical operations only once per run
+- **Determinism:** Identical inputs always produce identical outputs
+- **Explicit data flow:** Dependencies are only available through declared param markers
+
+```python
+from invariant import Executor, Node, OpRegistry, ref
+from invariant.store.memory import MemoryStore
+
+registry = OpRegistry()
+store = MemoryStore()
+executor = Executor(registry=registry, store=store)
+
+graph = {
+    "x": Node(op_name="stdlib:from_integer", params={"value": 5}, deps=[]),
+    "y": Node(op_name="stdlib:from_integer", params={"value": 3}, deps=[]),
+    "sum": Node(
+        op_name="stdlib:add",
+        params={"a": ref("x"), "b": ref("y")},
+        deps=["x", "y"],
+    ),
+}
+
+results = executor.execute(graph)
+# results["sum"].value == 8
+```
+
+---
+
+## 2. Two-Phase Execution Model
+
+For each node (in topological order), the executor runs two phases:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Phase 1: Context Resolution                            │
+│                                                         │
+│  Node params + dependency artifacts                     │
+│       ↓ resolve ref(), cel(), ${...}                    │
+│  Manifest (resolved params only)                        │
+│       ↓ hash_manifest()                                 │
+│  Digest (SHA-256 cache key)                             │
+├─────────────────────────────────────────────────────────┤
+│  Phase 2: Action Execution                              │
+│                                                         │
+│  Check: artifacts_by_digest[(op_name, digest)]?         │
+│       → Yes: deduplication hit, reuse artifact          │
+│  Check: store.exists(op_name, digest)?                  │
+│       → Yes: cache hit, load from store                 │
+│  Otherwise:                                             │
+│       Invoke op(**kwargs from manifest)                 │
+│       Validate + wrap return value                      │
+│       Store artifact to store                           │
+│                                                         │
+│  Result: ICacheable artifact                            │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Key invariant:** The manifest is built entirely from resolved params. Dependencies are NOT injected into the manifest — they are only used to resolve `ref()`, `cel()`, and `${...}` markers within params. This is what makes the cache identity explicit and deterministic.
+
+---
+
+## 3. Phase 1: Context Resolution
+
+### 3.1 Graph Validation
+
+Before execution begins, the `GraphResolver` validates the graph:
+
+1. **Dependency existence:** Every dependency declared in a node's `deps` must exist either as a node in the graph or as a key in the `context` dict.
+2. **Op registration:** Every `op_name` must be registered in the `OpRegistry` (if a registry is provided to the resolver).
+3. **Cycle detection:** The graph must be acyclic. Cycles are detected using DFS with three-color marking (WHITE/GRAY/BLACK).
+
+Validation failures raise `ValueError` with descriptive messages.
+
+**Example — missing dependency error:**
+
+```python
+graph = {
+    "a": Node(op_name="test", params={}, deps=["nonexistent"]),
+}
+executor.execute(graph)
+# ValueError: Node 'a' has dependency 'nonexistent' that doesn't exist
+#             in graph or context.
+```
+
+### 3.2 Topological Sort
+
+After validation, nodes are topologically sorted using **Kahn's algorithm** (BFS-based). This guarantees that when a node is processed, all its dependencies have already been executed and their artifacts are available.
+
+Context dependencies (external inputs not in the graph) are excluded from the sort — they are injected before the sort loop begins.
+
+### 3.3 Manifest Construction
+
+For each node, the executor builds a **Manifest** — a fully resolved dictionary of parameter values:
+
+1. Collect dependency artifacts from already-executed upstream nodes
+2. Call `resolve_params(node.params, dependencies)` to resolve all markers:
+   - `ref("dep")` → ICacheable artifact from dependency
+   - `cel("expr")` → evaluated CEL expression result
+   - `"${expr}"` → interpolated string (or native type for whole-string expressions)
+   - Literals → passed through unchanged
+   - Nested dicts/lists → recursively resolved
+3. The result is the Manifest — a plain dict with all markers resolved
+
+**The manifest contains resolved params only.** The dependency artifacts are used during resolution but are not themselves part of the manifest.
+
+See [Expressions Reference](./expressions.md) for full details on marker resolution.
+
+### 3.4 Digest Computation
+
+The Manifest is hashed to produce a **Digest** — a 64-character hex SHA-256 string that serves as the cache key.
+
+**Hashing rules** (`hash_manifest` in `hashing.py`):
+
+1. Keys are sorted alphabetically for canonical ordering
+2. Each key and value is hashed recursively:
+   - `ICacheable` → `get_stable_hash()`
+   - `str` → SHA-256 of UTF-8 bytes
+   - `int` → SHA-256 of string representation
+   - `Decimal` → SHA-256 of canonicalized string
+   - `dict` → sorted keys, recursive hash of each key-value pair
+   - `list`/`tuple` → sequential hash of each element
+   - `None` → SHA-256 of `b"None"`
+3. All individual hashes are combined into a single SHA-256 digest
+
+**Supported types for hashing:** `ICacheable`, `str`, `int`, `Decimal`, `dict`, `list`, `tuple`, `None`.
+
+**Unsupported types** raise `TypeError` — notably `float` and `bytes`.
+
+---
+
+## 4. Phase 2: Action Execution
+
+### 4.1 Cache Lookup and Deduplication
+
+The cache key is the tuple `(op_name, digest)`. This composite key ensures that different operations with the same input manifest cache separately — two different ops could receive identical inputs but produce different outputs.
+
+The executor checks three levels, in order:
+
+1. **In-memory deduplication** (`artifacts_by_digest` dict): A run-local dict keyed by `(op_name, digest)`. If two nodes in the same graph execution produce the same op+digest, the second one reuses the first's artifact without hitting the store.
+
+2. **Store cache** (`store.exists(op_name, digest)`): Checks the configured `ArtifactStore`. If found, loads the artifact and also populates the deduplication dict.
+
+3. **Execution:** If neither check hits, the op is invoked.
+
+### 4.2 Operation Invocation
+
+Ops are plain Python functions. The executor maps manifest keys to function parameters using `inspect.signature()`:
+
+1. Inspect the op's function signature
+2. For each declared parameter:
+   - If the parameter name exists as a manifest key → use the manifest value
+   - If the parameter has a default value → skip (use default)
+   - If the parameter is `**kwargs` → handled separately
+   - Otherwise → raise `ValueError` (missing required parameter)
+3. If the function accepts `**kwargs`, remaining manifest keys not already mapped are passed through
+4. Invoke `op(**kwargs)`
+
+**Example:**
+
+```python
+# Op signature:
+def add(a: int, b: int) -> int:
+    return a + b
+
+# Manifest: {"a": 3, "b": 7}
+# Executor maps: a=3, b=7
+# Invokes: add(a=3, b=7) → 10
+```
+
+### 4.3 Type Unwrapping
+
+Before passing manifest values to op parameters, the executor performs **best-effort type unwrapping** when the op expects native types but receives ICacheable wrappers:
+
+| Op expects | Manifest has | Action |
+|:--|:--|:--|
+| `int` | `Integer(42)` | Unwrap to `42` |
+| `str` | `String("hello")` | Unwrap to `"hello"` |
+| Other type annotations | ICacheable | Passed as-is (no unwrapping) |
+| No annotation | Any | Passed as-is |
+
+**Important:** This unwrapping is best-effort based on type annotations. If the op declares `a: int` and receives `Integer(42)`, the executor extracts `.value`. If the op declares `a: Polynomial` and receives a `Polynomial`, no unwrapping occurs — the artifact is passed directly.
+
+> **Note:** Only `Integer → int` and `String → str` unwrapping is currently implemented. See [Implementation Flag F-07](#f-07-limited-type-unwrapping).
+
+### 4.4 Return Value Validation and Wrapping
+
+After the op returns, the executor:
+
+1. **Validates** the return value is cacheable using `is_cacheable(result)`. If not, raises `TypeError`.
+2. **Wraps** native types to ICacheable using `to_cacheable(result)`:
+   - `int` → `Integer(value)`
+   - `str` → `String(value)`
+   - `Decimal` → `DecimalValue(value)`
+   - `ICacheable` → passed through unchanged
+
+This means ops can return native Python types (`int`, `str`, `Decimal`) and they will be automatically wrapped for storage.
+
+**Example:**
+
+```python
+def add(a: int, b: int) -> int:
+    return a + b  # Returns native int
+
+# Executor wraps: to_cacheable(8) → Integer(8)
+```
+
+### 4.5 Artifact Persistence
+
+After execution (or cache retrieval), the artifact is:
+
+1. Stored in the `ArtifactStore` under `(op_name, digest)`
+2. Stored in the run-local `artifacts_by_digest` dict for deduplication
+3. Stored in `artifacts_by_node[node_id]` for downstream dependency resolution
+
+---
+
+## 5. External Dependencies (Context)
+
+The `executor.execute(graph, context={...})` method accepts an optional `context` dict of external dependencies — values not produced by any node in the graph.
+
+**How context works:**
+
+1. Before the topological sort loop, context values are injected into `artifacts_by_node`
+2. Context values must be cacheable (`is_cacheable()` check) and are wrapped to ICacheable via `to_cacheable()`
+3. Any node can declare a context key in its `deps` and reference it via `ref()`, `cel()`, or `${...}` — identically to graph-internal dependencies
+4. From a node's perspective, there is no difference between an internal artifact and a context value
+
+**Rules:**
+
+- A dependency that **is** a key in the graph → internal dependency (resolved by executing that node)
+- A dependency that **is not** in the graph but **is** in context → external dependency
+- A dependency in neither → validation error
+
+**Example:**
+
+```python
+context = {"root_width": Integer(144)}
+
+graph = {
+    "bg": Node(
+        op_name="stdlib:from_integer",
+        params={"value": cel("root_width.value")},
+        deps=["root_width"],  # References context, not a graph node
+    ),
+}
+
+results = executor.execute(graph, context=context)
+```
+
+> **Warning:** See [Implementation Flag F-02 (in expressions.md)](./expressions.md#f-02-context-values-as-plain-dicts) — the architecture.md example shows plain dicts as context values, but the implementation requires ICacheable-compatible values.
+
+---
+
+## 6. Graph Resolver
+
+The `GraphResolver` is responsible for validating and sorting the DAG.
+
+**API:**
+
+```python
+resolver = GraphResolver(registry=registry)  # registry optional
+
+# Full pipeline: validate + sort
+sorted_node_ids = resolver.resolve(graph, context_keys={"root"})
+
+# Or individually:
+resolver.validate(graph, context_keys={"root"})
+sorted_node_ids = resolver.topological_sort(graph, context_keys={"root"})
+```
+
+**Validation checks:**
+1. All dependencies exist in graph or context
+2. All ops are registered (if registry provided)
+3. No cycles (DFS three-color algorithm)
+
+**Topological sort:** Kahn's algorithm. Context dependencies are excluded from in-degree calculations. Returns a list of node IDs in execution order (dependencies before dependents).
+
+---
+
+## 7. Artifact Store
+
+### 7.1 Store Interface
+
+All stores implement `ArtifactStore` (abstract base class):
+
+```python
+class ArtifactStore(ABC):
+    def exists(self, op_name: str, digest: str) -> bool: ...
+    def get(self, op_name: str, digest: str) -> ICacheable: ...
+    def put(self, op_name: str, digest: str, artifact: ICacheable) -> None: ...
+```
+
+The composite key `(op_name, digest)` ensures that different operations with identical input manifests cache separately.
+
+**Serialization format** (used by both MemoryStore and DiskStore):
+
+```
+[4 bytes: type_name_length][type_name_utf8][serialized_artifact_bytes]
+```
+
+Where:
+- `type_name` is the fully qualified class path (e.g., `"invariant.types.Integer"`)
+- `serialized_artifact_bytes` is the output of `artifact.to_stream()`
+- Deserialization uses `importlib` to load the class and calls `cls.from_stream()`
+
+### 7.2 MemoryStore
+
+Fast, ephemeral store using an in-memory dict. Suitable for testing.
+
+```python
+from invariant.store.memory import MemoryStore
+store = MemoryStore()
+```
+
+- Artifacts are serialized to bytes on `put()` and deserialized on `get()`
+- Lost when the store instance is garbage collected
+- Supports `clear()` method for test cleanup
+
+### 7.3 DiskStore
+
+Persistent filesystem store under `.invariant/cache/`.
+
+```python
+from invariant.store.disk import DiskStore
+store = DiskStore()                          # Default: .invariant/cache/
+store = DiskStore(cache_dir="/tmp/cache")    # Custom directory
+```
+
+**Directory structure:** `{cache_dir}/{safe_op_name}/{digest[:2]}/{digest[2:]}`
+
+Where `safe_op_name` replaces `:` and `/` with `_`.
+
+- Writes are atomic (write to `.tmp` file, then rename)
+- Digest must be exactly 64 hex characters
+
+### 7.4 ChainStore
+
+Composite two-tier cache chaining MemoryStore (L1) and DiskStore (L2).
+
+```python
+from invariant.store.chain import ChainStore
+store = ChainStore()  # Creates default L1 (MemoryStore) and L2 (DiskStore)
+```
+
+**Behavior:**
+- `exists()`: Check L1, then L2
+- `get()`: Try L1 first; if L2 hit, **promote** to L1 for faster subsequent access
+- `put()`: Write to **both** L1 and L2
+
+---
+
+## 8. Op Registry
+
+The `OpRegistry` maps string identifiers to Python callables.
+
+```python
+registry = OpRegistry()  # Singleton
+
+# Individual registration
+registry.register("my_op", my_function)
+
+# Package registration (prefix:name)
+registry.register_package("poly", poly_module)
+# Registers: poly:add, poly:multiply, etc.
+
+# Auto-discovery from entry points
+registry.auto_discover()  # Scans "invariant.ops" entry point group
+```
+
+**Package registration** accepts:
+- A `dict[str, Callable]` mapping short names to callables
+- A Python module with an `OPS` dict attribute
+- An object with an `OPS` dict attribute
+
+**Entry point auto-discovery** scans the `"invariant.ops"` entry point group. Each entry point name becomes the package prefix.
+
+> **Note:** See [Implementation Flag F-04 (in expressions.md)](./expressions.md#f-04-opregistry-described-as-singleton-but-requires-clear-in-tests) — the singleton pattern requires `clear()` in tests.
+
+---
+
+## 9. Cacheable Type Universe
+
+The **Cacheable Type Universe** defines what values can appear in manifests, be stored as artifacts, or be passed between nodes.
+
+**Allowed types** (recursive for containers):
+
+| Type | Notes |
+|:--|:--|
+| `int` | |
+| `str` | |
+| `bool` | |
+| `None` | Cacheable but not yet wrappable to ICacheable |
+| `Decimal` | Safe numerics — no float |
+| `dict[str, CacheableValue]` | String keys only, values recursively cacheable |
+| `list[CacheableValue]` | Elements recursively cacheable |
+| `tuple[CacheableValue, ...]` | Elements recursively cacheable |
+| Any `ICacheable` implementor | |
+
+**Forbidden types:**
+
+| Type | Reason |
+|:--|:--|
+| `float` | IEEE 754 non-determinism across architectures |
+| `bytes` | Not yet supported |
+| Arbitrary objects | Not serializable/hashable |
+
+**Wrapping** (`to_cacheable()`):
+
+| Input | Output |
+|:--|:--|
+| `int` | `Integer(value)` |
+| `str` | `String(value)` |
+| `Decimal` | `DecimalValue(value)` |
+| `bool` | `Integer(int(value))` |
+| `ICacheable` | Passed through |
+| `None` | `NotImplementedError` |
+| `dict`, `list`, `tuple` | `NotImplementedError` |
+
+---
+
+## 10. Examples
+
+### 10.1 Simple Linear Graph
+
+```python
+from invariant import Executor, Node, OpRegistry, ref
+from invariant.ops import stdlib
+from invariant.store.memory import MemoryStore
+
+registry = OpRegistry()
+registry.register_package("stdlib", stdlib)
+
+graph = {
+    "x": Node(op_name="stdlib:from_integer", params={"value": 5}, deps=[]),
+    "y": Node(op_name="stdlib:from_integer", params={"value": 3}, deps=[]),
+    "sum": Node(
+        op_name="stdlib:add",
+        params={"a": ref("x"), "b": ref("y")},
+        deps=["x", "y"],
+    ),
+}
+
+store = MemoryStore()
+executor = Executor(registry=registry, store=store)
+results = executor.execute(graph)
+
+assert results["sum"].value == 8
+```
+
+### 10.2 Diamond Pattern with cel()
+
+```python
+from invariant import Executor, Node, OpRegistry, cel
+from invariant.store.memory import MemoryStore
+
+registry = OpRegistry()
+
+def add_one(value: int = 0) -> int:
+    return value + 1
+
+registry.register("add_one", add_one)
+
+graph = {
+    "a": Node(op_name="add_one", params={"value": 0}, deps=[]),
+    "b": Node(op_name="add_one", params={"value": cel("a.value")}, deps=["a"]),
+    "c": Node(op_name="add_one", params={"value": cel("a.value")}, deps=["a"]),
+    "d": Node(
+        op_name="add_one",
+        params={"value": cel("b.value + c.value")},
+        deps=["b", "c"],
+    ),
+}
+
+store = MemoryStore()
+executor = Executor(registry=registry, store=store)
+results = executor.execute(graph)
+
+# a=1, b=2, c=2, d=5
+assert results["a"].value == 1
+assert results["b"].value == 2
+assert results["d"].value == 5
+```
+
+### 10.3 Cache Reuse Across Runs
+
+```python
+store = MemoryStore()
+executor = Executor(registry=registry, store=store)
+
+# First run: all ops execute, artifacts stored
+results1 = executor.execute(graph)
+
+# Second run: all ops skipped, artifacts loaded from cache
+results2 = executor.execute(graph)
+
+# Results are identical
+assert results1["sum"].value == results2["sum"].value
+```
+
+### 10.4 Deduplication Within a Run
+
+```python
+# Two nodes with identical op + params produce the same digest
+graph = {
+    "a": Node(op_name="stdlib:from_integer", params={"value": 42}, deps=[]),
+    "b": Node(op_name="stdlib:from_integer", params={"value": 42}, deps=[]),
+}
+
+results = executor.execute(graph)
+# "a" executes, "b" reuses "a"'s artifact via deduplication
+assert results["a"].value == results["b"].value == 42
+```
+
+### 10.5 External Context
+
+```python
+from invariant.types import Integer
+
+context = {"width": Integer(144), "height": Integer(144)}
+
+graph = {
+    "bg": Node(
+        op_name="stdlib:from_integer",
+        params={"value": cel("width.value")},
+        deps=["width"],
+    ),
+}
+
+results = executor.execute(graph, context=context)
+assert results["bg"].value == 144
+```
+
+### 10.6 Complete Polynomial Pipeline
+
+See architecture.md §8.5 for the full distributive-law verification pipeline demonstrating chains, branches, merges, and deduplication.
+
+---
+
+## 11. Implementation Flags
+
+The following items are **disagreements or ambiguities** between documentation and the current implementation. Flags shared with the expressions reference are cross-referenced.
+
+---
+
+### F-07: Limited Type Unwrapping
+
+**Documentation says** (architecture.md §4): "Engine performs best-effort type unwrapping (e.g., `Integer` → `int`) when the op expects native types."
+
+**Implementation:** Only two unwrapping cases are implemented:
+- `Integer` → `int` (when parameter annotation is `int`)
+- `String` → `str` (when parameter annotation is `str`)
+
+Other ICacheable types (e.g., `DecimalValue` → `Decimal`, `Polynomial` → tuple) are not unwrapped.
+
+**Impact:** Ops that need `Decimal` values must accept `DecimalValue` or handle unwrapping themselves. Adding `DecimalValue → Decimal` unwrapping would be straightforward.
+
+**Source:** `executor.py` `_invoke_op()` lines 178–182.
+
+---
+
+### F-08: `bool` Wrapping Loses Type Information
+
+**Documentation:** Not explicitly specified.
+
+**Implementation:** `to_cacheable(True)` returns `Integer(1)`, not a hypothetical `Boolean(True)`. The `bool` check in `to_cacheable()` runs before the `int` check (since `bool` is a subclass of `int` in Python), but it still wraps as `Integer`.
+
+**Impact:** Round-tripping a `bool` through the cache produces an `int`. If an op returns `True`, the stored artifact is `Integer(1)`.
+
+**Source:** `cacheable.py` `to_cacheable()` lines 139–140.
+
+---
+
+### F-09: Container Wrapping Not Implemented
+
+**Documentation:** `is_cacheable()` accepts `dict`, `list`, and `tuple` as cacheable types.
+
+**Implementation:** `to_cacheable()` raises `NotImplementedError` for container types. This means:
+- Containers can appear in manifests (they're hashable via `hash_value()`)
+- But ops cannot return containers as artifacts (wrapping fails)
+- Context values cannot be containers (wrapping fails)
+
+**Impact:** This limits what ops can return and what context values can be. `DictArtifact` and `ListArtifact` types are planned but not yet implemented.
+
+**Source:** `cacheable.py` `to_cacheable()` lines 157–162.
+
+---
+
+### F-10: `None` Wrapping Not Implemented
+
+**Documentation:** `is_cacheable(None)` returns `True`. `hash_value(None)` returns a valid hash.
+
+**Implementation:** `to_cacheable(None)` raises `NotImplementedError`. Ops cannot return `None`, and context values cannot be `None`.
+
+**Source:** `cacheable.py` `to_cacheable()` lines 151–155.
+
+---
+
+**Cross-references:** See also [expressions.md Implementation Flags](./expressions.md#9-implementation-flags) for F-01 through F-06.
+
