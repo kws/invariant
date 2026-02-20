@@ -1,7 +1,7 @@
 """End-to-end tests for commutative operation canonicalization."""
 
 from invariant import Executor, Node, OpRegistry, cel, ref
-from invariant.ops.stdlib import add, from_integer
+from invariant.ops.stdlib import add, identity
 from invariant.store.memory import MemoryStore
 
 
@@ -9,19 +9,19 @@ def test_commutative_canonicalization():
     """Test that min/max canonicalization ensures cache hits for commutative ops."""
     registry = OpRegistry()
     registry.clear()  # Clear singleton state
-    registry.register("stdlib:from_integer", from_integer)
+    registry.register("stdlib:identity", identity)
     registry.register("stdlib:add", add)
 
     # Create graph with two nodes computing the same sum with different operand orders
     # Both use min/max to canonicalize, so they should resolve to the same manifest
     graph = {
         "x": Node(
-            op_name="stdlib:from_integer",
+            op_name="stdlib:identity",
             params={"value": 7},
             deps=[],
         ),
         "y": Node(
-            op_name="stdlib:from_integer",
+            op_name="stdlib:identity",
             params={"value": 3},
             deps=[],
         ),
@@ -29,8 +29,8 @@ def test_commutative_canonicalization():
         "sum_xy": Node(
             op_name="stdlib:add",
             params={
-                "a": cel("min(x.value, y.value)"),
-                "b": cel("max(x.value, y.value)"),
+                "a": cel("min(x, y)"),
+                "b": cel("max(x, y)"),
             },
             deps=["x", "y"],
         ),
@@ -38,8 +38,8 @@ def test_commutative_canonicalization():
         "sum_yx": Node(
             op_name="stdlib:add",
             params={
-                "a": cel("min(y.value, x.value)"),
-                "b": cel("max(y.value, x.value)"),
+                "a": cel("min(y, x)"),
+                "b": cel("max(y, x)"),
             },
             deps=["x", "y"],
         ),
@@ -50,8 +50,8 @@ def test_commutative_canonicalization():
     results = executor.execute(graph)
 
     # Both should produce the same result
-    assert results["sum_xy"].value == results["sum_yx"].value
-    assert results["sum_xy"].value == 10  # 3 + 7
+    assert results["sum_xy"] == results["sum_yx"]
+    assert results["sum_xy"] == 10  # 3 + 7
 
     # Note: We can't easily verify they used the same cache entry without
     # inspecting the store internals, but the fact that both produce
@@ -62,19 +62,19 @@ def test_commutative_without_canonicalization():
     """Test that without canonicalization, different orders produce different results."""
     registry = OpRegistry()
     registry.clear()  # Clear singleton state
-    registry.register("stdlib:from_integer", from_integer)
+    registry.register("stdlib:identity", identity)
     registry.register("stdlib:add", add)
 
     # This test shows that without min/max, the order matters for caching
     # (though mathematically the result is the same)
     graph = {
         "x": Node(
-            op_name="stdlib:from_integer",
+            op_name="stdlib:identity",
             params={"value": 7},
             deps=[],
         ),
         "y": Node(
-            op_name="stdlib:from_integer",
+            op_name="stdlib:identity",
             params={"value": 3},
             deps=[],
         ),
@@ -97,8 +97,8 @@ def test_commutative_without_canonicalization():
     results = executor.execute(graph)
 
     # Results are mathematically the same
-    assert results["sum_xy"].value == results["sum_yx"].value
-    assert results["sum_xy"].value == 10
+    assert results["sum_xy"] == results["sum_yx"]
+    assert results["sum_xy"] == 10
 
     # But without canonicalization, they would have different manifests
     # and thus different cache entries (this is expected behavior)

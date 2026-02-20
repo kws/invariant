@@ -3,7 +3,6 @@
 from invariant import Executor, Node, OpRegistry, ref
 from invariant.ops import poly
 from invariant.store.memory import MemoryStore
-from invariant.types import Integer
 
 
 def test_distributive_law_pipeline():
@@ -94,13 +93,13 @@ def test_distributive_law_pipeline():
     # Verify distributive law: (p + q) * r == p*r + q*r
     assert results["lhs"].coefficients == results["rhs"].coefficients
 
-    # Verify numeric equality at x=5 (results are wrapped as Integer by executor)
-    assert isinstance(results["eval_lhs"], Integer)
-    assert isinstance(results["eval_rhs"], Integer)
-    assert results["eval_lhs"].value == results["eval_rhs"].value
+    # Verify numeric equality at x=5 (results are native int)
+    assert isinstance(results["eval_lhs"], int)
+    assert isinstance(results["eval_rhs"], int)
+    assert results["eval_lhs"] == results["eval_rhs"]
 
     # Verify derivative chain
-    assert isinstance(results["eval_d2"], Integer)
+    assert isinstance(results["eval_d2"], int)
 
 
 def test_cache_reuse():

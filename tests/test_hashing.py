@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 
 from invariant.hashing import hash_manifest, hash_value
-from invariant.types import DecimalValue, Integer, String
+from invariant.types import Polynomial
 
 
 class TestHashValue:
@@ -43,11 +43,11 @@ class TestHashValue:
 
     def test_hash_cacheable(self):
         """Test hashing an ICacheable object."""
-        s = String("test")
-        h1 = hash_value(s)
-        h2 = hash_value(s)
+        p = Polynomial((1, 2, 3))
+        h1 = hash_value(p)
+        h2 = hash_value(p)
         assert h1 == h2
-        assert h1 == s.get_stable_hash()
+        assert h1 == p.get_stable_hash()
 
     def test_hash_dict(self):
         """Test hashing a dictionary."""
@@ -80,7 +80,7 @@ class TestHashValue:
 
     def test_hash_nested_structures(self):
         """Test hashing nested structures."""
-        d = {"a": 1, "b": {"c": 2, "d": [3, 4]}, "e": String("test")}
+        d = {"a": 1, "b": {"c": 2, "d": [3, 4]}, "e": "test"}
         h1 = hash_value(d)
         h2 = hash_value(d)
         assert h1 == h2
@@ -93,7 +93,7 @@ class TestHashValue:
     def test_hash_determinism(self):
         """Test that hashing is deterministic across runs."""
         # Same input should always produce same hash
-        value = {"a": Integer(1), "b": String("test")}
+        value = {"a": 1, "b": "test"}
         hashes = [hash_value(value) for _ in range(10)]
         assert len(set(hashes)) == 1  # All same
 
@@ -103,7 +103,7 @@ class TestHashManifest:
 
     def test_hash_simple_manifest(self):
         """Test hashing a simple manifest."""
-        manifest = {"a": Integer(1), "b": String("test")}
+        manifest = {"a": 1, "b": "test"}
         h1 = hash_manifest(manifest)
         h2 = hash_manifest(manifest)
         assert h1 == h2
@@ -125,18 +125,20 @@ class TestHashManifest:
 
     def test_hash_manifest_nested(self):
         """Test hashing nested manifests."""
+        from decimal import Decimal
+
         manifest = {
-            "param1": Integer(1),
-            "param2": String("test"),
-            "nested": {"inner": DecimalValue("1.5")},
+            "param1": 1,
+            "param2": "test",
+            "nested": {"inner": Decimal("1.5")},
         }
         h1 = hash_manifest(manifest)
         h2 = hash_manifest(manifest)
         assert h1 == h2
 
     def test_hash_manifest_with_cacheable(self):
-        """Test hashing manifest with ICacheable values."""
-        manifest = {"value": String("hello"), "number": Integer(42)}
+        """Test hashing manifest with ICacheable domain types."""
+        manifest = {"value": "hello", "number": 42}
         h1 = hash_manifest(manifest)
         h2 = hash_manifest(manifest)
         assert h1 == h2

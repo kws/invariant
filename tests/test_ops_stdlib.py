@@ -2,26 +2,25 @@
 
 import pytest
 
-from invariant.ops.stdlib import add, from_integer, identity, multiply
-from invariant.types import Integer, String
+from invariant.ops.stdlib import add, dict_get, identity, multiply
 
 
 class TestIdentity:
     """Tests for identity operation."""
 
     def test_identity_string(self):
-        """Test identity with String."""
-        value = String("test")
+        """Test identity with string."""
+        value = "test"
         result = identity(value)
         assert result == value
-        assert isinstance(result, String)
+        assert isinstance(result, str)
 
     def test_identity_integer(self):
-        """Test identity with Integer."""
-        value = Integer(42)
+        """Test identity with integer."""
+        value = 42
         result = identity(value)
         assert result == value
-        assert isinstance(result, Integer)
+        assert isinstance(result, int)
 
 
 class TestAdd:
@@ -64,36 +63,20 @@ class TestMultiply:
         assert result == 0
 
 
-class TestFromInteger:
-    """Tests for from_integer operation."""
-
-    def test_from_integer(self):
-        """Test creating Integer from int."""
-        result = from_integer(42)
-        assert isinstance(result, Integer)
-        assert result.value == 42
-
-    def test_from_integer_zero(self):
-        """Test creating Integer from zero."""
-        result = from_integer(0)
-        assert isinstance(result, Integer)
-        assert result.value == 0
-
-    def test_from_integer_negative(self):
-        """Test creating Integer from negative int."""
-        result = from_integer(-10)
-        assert isinstance(result, Integer)
-        assert result.value == -10
-
-
 class TestDictGet:
     """Tests for dict_get operation."""
 
-    def test_dict_get_not_implemented(self):
-        """Test that dict_get requires ICacheable dict (not yet implemented)."""
-        from invariant.ops.stdlib import dict_get
+    def test_dict_get(self):
+        """Test extracting value from dict."""
+        result = dict_get(dict_obj={"a": 1, "b": 2}, key="a")
+        assert result == 1
 
-        # dict_get requires a Dict cacheable type which we haven't implemented
-        with pytest.raises((TypeError, KeyError)):
-            # The actual error depends on what we pass
-            dict_get(dict_obj={}, key="test")
+    def test_dict_get_missing_key(self):
+        """Test that missing key raises KeyError."""
+        with pytest.raises(KeyError):
+            dict_get(dict_obj={"a": 1}, key="missing")
+
+    def test_dict_get_not_dict(self):
+        """Test that non-dict raises TypeError."""
+        with pytest.raises(TypeError):
+            dict_get(dict_obj="not a dict", key="a")

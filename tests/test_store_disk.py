@@ -1,11 +1,12 @@
 """Tests for DiskStore."""
 
 import shutil
+from decimal import Decimal
 
 import pytest
 
+from invariant.hashing import hash_value
 from invariant.store.disk import DiskStore
-from invariant.types import DecimalValue, Integer, String
 
 
 @pytest.fixture
@@ -59,15 +60,15 @@ class TestDiskStore:
         """Test storing and retrieving an artifact."""
         store = DiskStore(temp_cache_dir)
         op_name = "test:op"
-        artifact = String("test")
-        digest = artifact.get_stable_hash()
+        artifact = "test"
+        digest = hash_value(artifact)
 
         store.put(op_name, digest, artifact)
         assert store.exists(op_name, digest)
 
         retrieved = store.get(op_name, digest)
-        assert isinstance(retrieved, String)
-        assert retrieved.value == "test"
+        assert isinstance(retrieved, str)
+        assert retrieved == "test"
 
     def test_get_nonexistent(self, temp_cache_dir):
         """Test that getting non-existent artifact raises KeyError."""
@@ -77,35 +78,35 @@ class TestDiskStore:
             store.get(op_name, "a" * 64)
 
     def test_put_and_get_integer(self, temp_cache_dir):
-        """Test storing and retrieving Integer."""
+        """Test storing and retrieving integer."""
         store = DiskStore(temp_cache_dir)
         op_name = "test:op"
-        artifact = Integer(42)
-        digest = artifact.get_stable_hash()
+        artifact = 42
+        digest = hash_value(artifact)
 
         store.put(op_name, digest, artifact)
         retrieved = store.get(op_name, digest)
-        assert isinstance(retrieved, Integer)
-        assert retrieved.value == 42
+        assert isinstance(retrieved, int)
+        assert retrieved == 42
 
     def test_put_and_get_decimal(self, temp_cache_dir):
-        """Test storing and retrieving DecimalValue."""
+        """Test storing and retrieving Decimal."""
         store = DiskStore(temp_cache_dir)
         op_name = "test:op"
-        artifact = DecimalValue("3.14159")
-        digest = artifact.get_stable_hash()
+        artifact = Decimal("3.14159")
+        digest = hash_value(artifact)
 
         store.put(op_name, digest, artifact)
         retrieved = store.get(op_name, digest)
-        assert isinstance(retrieved, DecimalValue)
-        assert retrieved.value == artifact.value
+        assert isinstance(retrieved, Decimal)
+        assert retrieved == artifact
 
     def test_persistence(self, temp_cache_dir):
         """Test that artifacts persist across store instances."""
         store1 = DiskStore(temp_cache_dir)
         op_name = "test:op"
-        artifact = String("persistent")
-        digest = artifact.get_stable_hash()
+        artifact = "persistent"
+        digest = hash_value(artifact)
 
         store1.put(op_name, digest, artifact)
 
@@ -113,14 +114,14 @@ class TestDiskStore:
         store2 = DiskStore(temp_cache_dir)
         assert store2.exists(op_name, digest)
         retrieved = store2.get(op_name, digest)
-        assert retrieved.value == "persistent"
+        assert retrieved == "persistent"
 
     def test_atomic_write(self, temp_cache_dir):
         """Test that writes are atomic (use temp file then rename)."""
         store = DiskStore(temp_cache_dir)
         op_name = "test:op"
-        artifact = String("atomic")
-        digest = artifact.get_stable_hash()
+        artifact = "atomic"
+        digest = hash_value(artifact)
 
         # This should not leave a .tmp file
         store.put(op_name, digest, artifact)
@@ -133,8 +134,8 @@ class TestDiskStore:
         """Test that directory structure is created correctly."""
         store = DiskStore(temp_cache_dir)
         op_name = "test:op"
-        artifact = String("test")
-        digest = artifact.get_stable_hash()
+        artifact = "test"
+        digest = hash_value(artifact)
 
         store.put(op_name, digest, artifact)
 

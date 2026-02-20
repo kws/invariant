@@ -6,7 +6,6 @@ import pytest
 
 from invariant.protocol import ICacheable
 from invariant.registry import OpPackage, OpRegistry
-from invariant.types import String
 
 
 def test_singleton():
@@ -20,7 +19,7 @@ def test_register_and_get(registry):
     """Test registering and getting an operation."""
 
     def test_op(manifest: dict) -> ICacheable:
-        return String("result")
+        return "result"
 
     registry.register("test_op", test_op)
     assert registry.has("test_op")
@@ -32,7 +31,7 @@ def test_register_empty_name(registry):
     """Test that registering with empty name raises ValueError."""
 
     def test_op(manifest: dict) -> ICacheable:
-        return String("result")
+        return "result"
 
     with pytest.raises(ValueError, match="cannot be empty"):
         registry.register("", test_op)
@@ -42,7 +41,7 @@ def test_register_duplicate(registry):
     """Test that registering duplicate name raises ValueError."""
 
     def test_op(manifest: dict) -> ICacheable:
-        return String("result")
+        return "result"
 
     registry.register("test_op", test_op)
     with pytest.raises(ValueError, match="already registered"):
@@ -59,7 +58,7 @@ def test_has(registry):
     """Test has method."""
 
     def test_op(manifest: dict) -> ICacheable:
-        return String("result")
+        return "result"
 
     assert not registry.has("test_op")
     registry.register("test_op", test_op)
@@ -70,7 +69,7 @@ def test_clear(registry):
     """Test clear method."""
 
     def test_op(manifest: dict) -> ICacheable:
-        return String("result")
+        return "result"
 
     registry.register("test_op", test_op)
     assert registry.has("test_op")
@@ -81,11 +80,11 @@ def test_clear(registry):
 def test_register_package_with_dict(registry):
     """Test register_package with a dict."""
 
-    def op1(manifest: dict) -> ICacheable:
-        return String("op1")
+    def op1(manifest: dict) -> str:
+        return "op1"
 
-    def op2(manifest: dict) -> ICacheable:
-        return String("op2")
+    def op2(manifest: dict) -> str:
+        return "op2"
 
     ops: OpPackage = {
         "op1": op1,
@@ -102,11 +101,11 @@ def test_register_package_with_dict(registry):
 def test_register_package_with_module(registry):
     """Test register_package with a module that has OPS attribute."""
 
-    def op1(manifest: dict) -> ICacheable:
-        return String("op1")
+    def op1(manifest: dict) -> str:
+        return "op1"
 
-    def op2(manifest: dict) -> ICacheable:
-        return String("op2")
+    def op2(manifest: dict) -> str:
+        return "op2"
 
     ops: OpPackage = {
         "op1": op1,
@@ -127,7 +126,7 @@ def test_register_package_with_module(registry):
 def test_register_package_empty_prefix(registry):
     """Test that register_package raises ValueError for empty prefix."""
 
-    ops: OpPackage = {"op1": lambda m: String("result")}
+    ops: OpPackage = {"op1": lambda m: "result"}
 
     with pytest.raises(ValueError, match="cannot be empty"):
         registry.register_package("", ops)
@@ -163,8 +162,8 @@ def test_register_package_module_with_invalid_ops(registry):
 def test_register_package_duplicate_name(registry):
     """Test that register_package raises ValueError for duplicate op names."""
 
-    def op1(manifest: dict) -> ICacheable:
-        return String("op1")
+    def op1(manifest: dict) -> str:
+        return "op1"
 
     ops: OpPackage = {"op1": op1}
 
@@ -191,7 +190,7 @@ def test_auto_discover(registry):
     assert registry.has("stdlib:identity")
     assert registry.has("stdlib:add")
     assert registry.has("stdlib:multiply")
-    assert registry.has("stdlib:from_integer")
+    assert registry.has("stdlib:dict_get")
 
 
 def test_auto_discover_idempotent(registry):

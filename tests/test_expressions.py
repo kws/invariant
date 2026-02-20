@@ -6,7 +6,7 @@ import pytest
 
 from invariant import cel, ref
 from invariant.expressions import resolve_params
-from invariant.types import Integer, Polynomial, String
+from invariant.types import Polynomial
 
 
 class TestVariableReferences:
@@ -15,27 +15,20 @@ class TestVariableReferences:
     def test_simple_variable_reference(self):
         """Test ${x} resolves to artifact value."""
         params = {"width": "${x}"}
-        deps = {"x": Integer(100)}
+        deps = {"x": 100}
         result = resolve_params(params, deps)
         assert result["width"] == 100
 
-    def test_field_access(self):
-        """Test ${x.value} accesses the value field."""
-        params = {"width": "${x.value}"}
-        deps = {"x": Integer(200)}
-        result = resolve_params(params, deps)
-        assert result["width"] == 200
-
     def test_string_artifact(self):
-        """Test variable reference with String artifact."""
-        params = {"name": "${x.value}"}
-        deps = {"x": String("hello")}
+        """Test variable reference with string artifact."""
+        params = {"name": "${x}"}
+        deps = {"x": "hello"}
         result = resolve_params(params, deps)
         assert result["name"] == "hello"
 
     def test_undeclared_variable(self):
         """Test that undeclared variables raise ValueError."""
-        params = {"width": "${x.value}"}
+        params = {"width": "${x}"}
         deps = {}
         with pytest.raises(ValueError, match="Failed to evaluate CEL expression"):
             resolve_params(params, deps)
@@ -45,30 +38,30 @@ class TestIntegerArithmetic:
     """Tests for integer arithmetic expressions."""
 
     def test_addition(self):
-        """Test ${x.value + y.value} adds two integers."""
-        params = {"sum": "${x.value + y.value}"}
-        deps = {"x": Integer(3), "y": Integer(7)}
+        """Test ${x + y} adds two integers."""
+        params = {"sum": "${x + y}"}
+        deps = {"x": 3, "y": 7}
         result = resolve_params(params, deps)
         assert result["sum"] == 10
 
     def test_addition_with_literal(self):
-        """Test ${x.value + 1} adds integer and literal."""
-        params = {"result": "${x.value + 1}"}
-        deps = {"x": Integer(5)}
+        """Test ${x + 1} adds integer and literal."""
+        params = {"result": "${x + 1}"}
+        deps = {"x": 5}
         result = resolve_params(params, deps)
         assert result["result"] == 6
 
     def test_multiplication(self):
-        """Test ${x.value * 2} multiplies integers."""
-        params = {"result": "${x.value * 2}"}
-        deps = {"x": Integer(7)}
+        """Test ${x * 2} multiplies integers."""
+        params = {"result": "${x * 2}"}
+        deps = {"x": 7}
         result = resolve_params(params, deps)
         assert result["result"] == 14
 
     def test_subtraction(self):
-        """Test ${x.value - y.value} subtracts integers."""
-        params = {"diff": "${x.value - y.value}"}
-        deps = {"x": Integer(10), "y": Integer(3)}
+        """Test ${x - y} subtracts integers."""
+        params = {"diff": "${x - y}"}
+        deps = {"x": 10, "y": 3}
         result = resolve_params(params, deps)
         assert result["diff"] == 7
 
@@ -100,9 +93,9 @@ class TestDecimalArithmetic:
         assert result["sum"] == Decimal("4.0")
 
     def test_decimal_from_integer(self):
-        """Test ${decimal(x.value)} converts integer to Decimal."""
-        params = {"result": "${decimal(x.value)}"}
-        deps = {"x": Integer(42)}
+        """Test ${decimal(x)} converts integer to Decimal."""
+        params = {"result": "${decimal(x)}"}
+        deps = {"x": 42}
         result = resolve_params(params, deps)
         assert isinstance(result["result"], Decimal)
         assert result["result"] == Decimal("42")
@@ -130,23 +123,23 @@ class TestStringInterpolation:
     """Tests for string interpolation with mixed text and expressions."""
 
     def test_simple_interpolation(self):
-        """Test "prefix_${x.value}_suffix" interpolates value."""
-        params = {"message": "Width is ${x.value}px"}
-        deps = {"x": Integer(200)}
+        """Test "prefix_${x}_suffix" interpolates value."""
+        params = {"message": "Width is ${x}px"}
+        deps = {"x": 200}
         result = resolve_params(params, deps)
         assert result["message"] == "Width is 200px"
 
     def test_multiple_interpolations(self):
         """Test string with multiple expressions."""
-        params = {"message": "${x.value} + ${y.value} = ${x.value + y.value}"}
-        deps = {"x": Integer(3), "y": Integer(7)}
+        params = {"message": "${x} + ${y} = ${x + y}"}
+        deps = {"x": 3, "y": 7}
         result = resolve_params(params, deps)
         assert result["message"] == "3 + 7 = 10"
 
     def test_string_artifact_interpolation(self):
-        """Test interpolation with String artifact."""
-        params = {"greeting": "Hello, ${name.value}!"}
-        deps = {"name": String("world")}
+        """Test interpolation with string artifact."""
+        params = {"greeting": "Hello, ${name}!"}
+        deps = {"name": "world"}
         result = resolve_params(params, deps)
         assert result["greeting"] == "Hello, world!"
 
@@ -162,23 +155,23 @@ class TestBuiltInFunctions:
     """Tests for built-in functions: min, max, decimal."""
 
     def test_min_with_values(self):
-        """Test ${min(x.value, y.value)} returns smaller value."""
-        params = {"result": "${min(x.value, y.value)}"}
-        deps = {"x": Integer(7), "y": Integer(3)}
+        """Test ${min(x, y)} returns smaller value."""
+        params = {"result": "${min(x, y)}"}
+        deps = {"x": 7, "y": 3}
         result = resolve_params(params, deps)
         assert result["result"] == 3
 
     def test_max_with_values(self):
-        """Test ${max(x.value, y.value)} returns larger value."""
-        params = {"result": "${max(x.value, y.value)}"}
-        deps = {"x": Integer(7), "y": Integer(3)}
+        """Test ${max(x, y)} returns larger value."""
+        params = {"result": "${max(x, y)}"}
+        deps = {"x": 7, "y": 3}
         result = resolve_params(params, deps)
         assert result["result"] == 7
 
     def test_min_with_artifacts(self):
         """Test ${min(x, y)} with artifact references."""
         params = {"a": "${min(x, y)}", "b": "${max(x, y)}"}
-        deps = {"x": Integer(7), "y": Integer(3)}
+        deps = {"x": 7, "y": 3}
         result = resolve_params(params, deps)
         # min/max with artifacts should return the value
         assert result["a"] == 3
@@ -189,7 +182,7 @@ class TestBuiltInFunctions:
         # Same expression with different order should produce same result
         params1 = {"a": "${min(x, y)}", "b": "${max(x, y)}"}
         params2 = {"a": "${min(y, x)}", "b": "${max(y, x)}"}
-        deps = {"x": Integer(7), "y": Integer(3)}
+        deps = {"x": 7, "y": 3}
         result1 = resolve_params(params1, deps)
         result2 = resolve_params(params2, deps)
         assert result1["a"] == result2["a"] == 3
@@ -204,8 +197,8 @@ class TestBuiltInFunctions:
         assert result1["result"] == Decimal("3.14")
 
         # From integer artifact
-        params2 = {"result": "${decimal(x.value)}"}
-        result2 = resolve_params(params2, {"x": Integer(42)})
+        params2 = {"result": "${decimal(x)}"}
+        result2 = resolve_params(params2, {"x": 42})
         assert isinstance(result2["result"], Decimal)
         assert result2["result"] == Decimal("42")
 
@@ -224,7 +217,7 @@ class TestErrorCases:
 
     def test_undeclared_dependency(self):
         """Test that undeclared dependency raises ValueError."""
-        params = {"result": "${nonexistent.value}"}
+        params = {"result": "${nonexistent}"}
         deps = {}
         with pytest.raises(ValueError, match="Failed to evaluate CEL expression"):
             resolve_params(params, deps)
@@ -233,19 +226,19 @@ class TestErrorCases:
         """Test expressions in nested dictionaries."""
         params = {
             "config": {
-                "width": "${x.value}",
-                "height": "${y.value}",
+                "width": "${x}",
+                "height": "${y}",
             }
         }
-        deps = {"x": Integer(100), "y": Integer(200)}
+        deps = {"x": 100, "y": 200}
         result = resolve_params(params, deps)
         assert result["config"]["width"] == 100
         assert result["config"]["height"] == 200
 
     def test_list_expressions(self):
         """Test expressions in lists."""
-        params = {"values": ["${x.value}", "${y.value}"]}
-        deps = {"x": Integer(1), "y": Integer(2)}
+        params = {"values": ["${x}", "${y}"]}
+        deps = {"x": 1, "y": 2}
         result = resolve_params(params, deps)
         assert result["values"] == [1, 2]
 
@@ -255,8 +248,8 @@ class TestComplexExpressions:
 
     def test_arithmetic_with_functions(self):
         """Test combining arithmetic and functions."""
-        params = {"result": "${min(x.value, y.value) + max(x.value, y.value)}"}
-        deps = {"x": Integer(3), "y": Integer(7)}
+        params = {"result": "${min(x, y) + max(x, y)}"}
+        deps = {"x": 3, "y": 7}
         result = resolve_params(params, deps)
         assert result["result"] == 10  # min(3,7) + max(3,7) = 3 + 7 = 10
 
@@ -270,8 +263,8 @@ class TestComplexExpressions:
 
     def test_mixed_types_in_expression(self):
         """Test expressions with mixed artifact types."""
-        params = {"message": "Count: ${count.value}, Name: ${name.value}"}
-        deps = {"count": Integer(42), "name": String("test")}
+        params = {"message": "Count: ${count}, Name: ${name}"}
+        deps = {"count": 42, "name": "test"}
         result = resolve_params(params, deps)
         assert result["message"] == "Count: 42, Name: test"
 
@@ -289,12 +282,12 @@ class TestRefMarker:
         assert isinstance(result["poly"], Polynomial)
 
     def test_ref_with_integer(self):
-        """Test ref() with Integer artifact."""
+        """Test ref() with integer artifact."""
         params = {"value": ref("x")}
-        deps = {"x": Integer(42)}
+        deps = {"x": 42}
         result = resolve_params(params, deps)
-        assert isinstance(result["value"], Integer)
-        assert result["value"].value == 42
+        assert isinstance(result["value"], int)
+        assert result["value"] == 42
 
     def test_ref_undeclared_dependency(self):
         """Test that ref() with undeclared dependency raises ValueError."""
@@ -328,15 +321,15 @@ class TestCelMarker:
 
     def test_cel_simple_expression(self):
         """Test cel() with simple arithmetic expression."""
-        params = {"sum": cel("x.value + y.value")}
-        deps = {"x": Integer(3), "y": Integer(7)}
+        params = {"sum": cel("x + y")}
+        deps = {"x": 3, "y": 7}
         result = resolve_params(params, deps)
         assert result["sum"] == 10
 
     def test_cel_field_access(self):
-        """Test cel() accessing artifact field."""
-        params = {"width": cel("background.value")}
-        deps = {"background": Integer(100)}
+        """Test cel() accessing artifact value."""
+        params = {"width": cel("background")}
+        deps = {"background": 100}
         result = resolve_params(params, deps)
         assert result["width"] == 100
 
@@ -351,25 +344,25 @@ class TestCelMarker:
     def test_cel_min_max(self):
         """Test cel() with min/max functions."""
         params = {
-            "min_val": cel("min(x.value, y.value)"),
-            "max_val": cel("max(x.value, y.value)"),
+            "min_val": cel("min(x, y)"),
+            "max_val": cel("max(x, y)"),
         }
-        deps = {"x": Integer(7), "y": Integer(3)}
+        deps = {"x": 7, "y": 3}
         result = resolve_params(params, deps)
         assert result["min_val"] == 3
         assert result["max_val"] == 7
 
     def test_cel_undeclared_dependency(self):
         """Test that cel() with undeclared dependency raises ValueError."""
-        params = {"value": cel("missing.value")}
+        params = {"value": cel("missing")}
         deps = {}
         with pytest.raises(ValueError, match="Failed to evaluate CEL expression"):
             resolve_params(params, deps)
 
     def test_cel_nested_in_dict(self):
         """Test cel() marker nested in dictionary."""
-        params = {"config": {"width": cel("bg.value"), "height": 200}}
-        deps = {"bg": Integer(100)}
+        params = {"config": {"width": cel("bg"), "height": 200}}
+        deps = {"bg": 100}
         result = resolve_params(params, deps)
         assert result["config"]["width"] == 100
         assert result["config"]["height"] == 200
@@ -377,10 +370,10 @@ class TestCelMarker:
     def test_cel_vs_string_interpolation(self):
         """Test that cel() and ${...} string interpolation both work."""
         params = {
-            "computed": cel("x.value + y.value"),
-            "message": "Sum is ${x.value + y.value}",
+            "computed": cel("x + y"),
+            "message": "Sum is ${x + y}",
         }
-        deps = {"x": Integer(3), "y": Integer(7)}
+        deps = {"x": 3, "y": 7}
         result = resolve_params(params, deps)
         assert result["computed"] == 10
         assert result["message"] == "Sum is 10"

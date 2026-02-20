@@ -1,63 +1,31 @@
 """End-to-end tests for context/external dependency support."""
 
 from invariant import Executor, Node, OpRegistry, cel
-from invariant.ops.stdlib import from_integer
+from invariant.ops.stdlib import identity
 from invariant.store.memory import MemoryStore
-from invariant.types import Integer
 
 
 def test_context_external_dependencies():
     """Test that external dependencies provided via context work correctly."""
     registry = OpRegistry()
     registry.clear()  # Clear singleton state
-    registry.register("stdlib:from_integer", from_integer)
+    registry.register("stdlib:identity", identity)
 
-    # Create a graph where nodes depend on external context values
-    graph = {
-        "background": Node(
-            op_name="stdlib:from_integer",
-            params={"value": "${root.width}"},  # Reference external context
-            deps=["root"],  # Declare root as dependency
-        ),
-        "height": Node(
-            op_name="stdlib:from_integer",
-            params={"value": "${root.height}"},
-            deps=["root"],
-        ),
-    }
-
-    # Provide context with external dependencies
+    # Create a simple context with native int values
     context = {
-        "root": {
-            "width": 144,
-            "height": 144,
-        }
-    }
-
-    # This should fail because context values must be ICacheable
-    # We need to wrap the context values properly
-    # Actually, looking at the architecture spec example, root is a dict
-    # But our implementation requires ICacheable. Let me check the spec again...
-
-    # Actually, the spec shows root as a plain dict in the example.
-    # But our Executor requires ICacheable. We need to handle this.
-    # For now, let's create a simple test that works with our current implementation
-
-    # Create a simple context with Integer values
-    context = {
-        "root_width": Integer(144),
-        "root_height": Integer(144),
+        "root_width": 144,
+        "root_height": 144,
     }
 
     graph = {
         "background": Node(
-            op_name="stdlib:from_integer",
-            params={"value": cel("root_width.value")},  # Access value from Integer
+            op_name="stdlib:identity",
+            params={"value": cel("root_width")},
             deps=["root_width"],
         ),
         "height": Node(
-            op_name="stdlib:from_integer",
-            params={"value": cel("root_height.value")},
+            op_name="stdlib:identity",
+            params={"value": cel("root_height")},
             deps=["root_height"],
         ),
     }
@@ -67,19 +35,19 @@ def test_context_external_dependencies():
     results = executor.execute(graph, context=context)
 
     # Verify results
-    assert results["background"].value == 144
-    assert results["height"].value == 144
+    assert results["background"] == 144
+    assert results["height"] == 144
 
 
 def test_context_missing_dependency():
     """Test that missing context dependency raises an error."""
     registry = OpRegistry()
     registry.clear()  # Clear singleton state
-    registry.register("stdlib:from_integer", from_integer)
+    registry.register("stdlib:identity", identity)
 
     graph = {
         "node": Node(
-            op_name="stdlib:from_integer",
+            op_name="stdlib:identity",
             params={"value": 42},
             deps=["missing"],  # Not in graph or context
         ),
@@ -100,21 +68,21 @@ def test_context_with_graph_nodes():
     """Test that context and graph nodes can be mixed."""
     registry = OpRegistry()
     registry.clear()  # Clear singleton state
-    registry.register("stdlib:from_integer", from_integer)
+    registry.register("stdlib:identity", identity)
 
     context = {
-        "external": Integer(100),
+        "external": 100,
     }
 
     graph = {
         "internal": Node(
-            op_name="stdlib:from_integer",
+            op_name="stdlib:identity",
             params={"value": 50},
             deps=[],
         ),
         "combined": Node(
             op_name="stdlib:add",
-            params={"a": cel("external.value"), "b": cel("internal.value")},
+            params={"a": cel("external"), "b": cel("internal")},
             deps=["external", "internal"],
         ),
     }
@@ -129,4 +97,4 @@ def test_context_with_graph_nodes():
     results = executor.execute(graph, context=context)
 
     # Verify combined result
-    assert results["combined"].value == 150  # 100 + 50
+    assert results["combined"] == 150  # 100 + 50
