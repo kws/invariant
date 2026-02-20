@@ -8,9 +8,12 @@ From section 8.7 of the architecture specification.
 """
 
 import argparse
+from pathlib import Path
 
 from invariant import Executor, Node, OpRegistry, cel
 from invariant.ops.stdlib import add, identity
+from invariant.store.chain import ChainStore
+from invariant.store.disk import DiskStore
 from invariant.store.memory import MemoryStore
 
 
@@ -29,6 +32,19 @@ def main():
         type=int,
         default=3,
         help="Second value for addition (default: 3)",
+    )
+    parser.add_argument(
+        "--store",
+        type=str,
+        choices=["memory", "disk", "chain"],
+        default="memory",
+        help="Store type: memory (ephemeral), disk (persistent), or chain (memory+disk) (default: memory)",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        type=str,
+        default=None,
+        help="Cache directory for disk/chain stores (default: .invariant/cache/)",
     )
     args = parser.parse_args()
 
@@ -63,7 +79,20 @@ def main():
         ),
     }
 
-    store = MemoryStore()
+    # Create store based on selected type
+    if args.store == "memory":
+        store = MemoryStore()
+        cache_dir_str = None
+    elif args.store == "disk":
+        cache_dir = Path(args.cache_dir) if args.cache_dir else None
+        store = DiskStore(cache_dir=cache_dir)
+        cache_dir_str = str(store.cache_dir)
+    else:  # chain
+        cache_dir = Path(args.cache_dir) if args.cache_dir else None
+        l2 = DiskStore(cache_dir=cache_dir)
+        store = ChainStore(l2=l2)
+        cache_dir_str = str(l2.cache_dir)
+
     executor = Executor(registry=registry, store=store)
     results = executor.execute(graph)
 
@@ -84,6 +113,22 @@ def main():
         "  - Ensures cache hits for commutative operations regardless of operand order"
     )
     print("  - Both nodes produce the same manifest hash, triggering deduplication")
+
+    # Print cache statistics
+    stats = store.stats
+    total_checks = stats.hits + stats.misses
+    hit_rate = (stats.hits / total_checks * 100) if total_checks > 0 else 0.0
+
+    print("\n" + "=" * 60)
+    print("Cache Statistics:")
+    print(f"  Store type: {args.store}")
+    if cache_dir_str:
+        print(f"  Cache directory: {cache_dir_str}")
+    print(f"  Hits: {stats.hits}")
+    print(f"  Misses: {stats.misses}")
+    print(f"  Puts: {stats.puts}")
+    print(f"  Hit rate: {hit_rate:.1f}%")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
