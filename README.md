@@ -32,27 +32,37 @@ from invariant.store.memory import MemoryStore
 registry = OpRegistry()
 registry.register_package("stdlib", stdlib)
 
-# Create a simple graph: x -> y -> sum
+# Pipeline: compute (3 * 4) + (5 * 6), then scale the total
+#
+#   ab ──┐
+#        ├── total ── scaled
+#   cd ──┘
+#
+# Literal values flow directly into params — no wrapper nodes needed.
+# ref()  passes a computed artifact to a downstream op.
+# cel()  evaluates a CEL (Common Expression Language) expression against
+#        upstream artifacts, useful for extracting or transforming values
+#        without a dedicated op.
 graph = {
-    "x": Node(
-        op_name="stdlib:from_integer",
-        params={"value": 5},
-        deps=[]
-    ),
-    "y": Node(
-        op_name="stdlib:from_integer",
-        params={"value": 3},
-        deps=[]
-    ),
-    "sum": Node(
-        op_name="stdlib:add",
-        params={"a": ref("x"), "b": ref("y")},  # ref() passes artifacts directly
-        deps=["x", "y"]
-    ),
-    "doubled": Node(
+    "ab": Node(
         op_name="stdlib:multiply",
-        params={"a": cel("sum.value"), "b": 2},  # cel() evaluates expression
-        deps=["sum"]
+        params={"a": 3, "b": 4},                    # literal inputs
+        deps=[]
+    ),
+    "cd": Node(
+        op_name="stdlib:multiply",
+        params={"a": 5, "b": 6},                    # literal inputs
+        deps=[]
+    ),
+    "total": Node(
+        op_name="stdlib:add",
+        params={"a": ref("ab"), "b": ref("cd")},    # ref() passes artifacts directly
+        deps=["ab", "cd"]
+    ),
+    "scaled": Node(
+        op_name="stdlib:multiply",
+        params={"a": ref("total"), "b": cel("ab + cd")},  # cel() computes from upstreams
+        deps=["ab", "cd", "total"]
     ),
 }
 
@@ -61,8 +71,10 @@ store = MemoryStore()
 executor = Executor(registry=registry, store=store)
 results = executor.execute(graph)
 
-print(results["sum"].value)    # 8
-print(results["doubled"].value)  # 16
+print(results["ab"])      # 12
+print(results["cd"])      # 30
+print(results["total"])   # 42
+print(results["scaled"])  # 42 * (12 + 30) = 1764
 ```
 
 ## Architecture
