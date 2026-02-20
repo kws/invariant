@@ -95,6 +95,7 @@ import celpy.celparser
 import celpy.celtypes as celtypes
 import celpy.evaluation
 
+from invariant.params import cel, ref
 from invariant.protocol import ICacheable
 
 
@@ -128,26 +129,52 @@ def resolve_params(
 def _resolve_value(value: Any, dependencies: dict[str, ICacheable]) -> Any:
     """Recursively resolve expressions in a value.
 
+    Handles ref() markers (artifact passthrough), cel() markers (CEL expressions),
+    ${...} string interpolation, and nested structures (dicts, lists).
+
     Args:
-        value: The value to resolve (may be a dict, list, or string with ${...}).
+        value: The value to resolve. May be:
+            - ref(dep): Resolves to the ICacheable artifact from dependency
+            - cel(expr): Evaluates CEL expression and returns computed value
+            - str with ${...}: String interpolation with CEL expressions
+            - dict/list: Recursively resolves nested values
+            - Other: Returns as-is
         dependencies: Dictionary of dependency artifacts.
 
     Returns:
-        Resolved value with all expressions evaluated.
+        Resolved value with all markers and expressions evaluated.
+
+    Raises:
+        ValueError: If ref() references undeclared dependency.
     """
+    # Handle ref() marker - artifact passthrough
+    if isinstance(value, ref):
+        if value.dep not in dependencies:
+            raise ValueError(
+                f"ref('{value.dep}') references undeclared dependency '{value.dep}'. "
+                f"Available dependencies: {list(dependencies.keys())}"
+            )
+        return dependencies[value.dep]
+
+    # Handle cel() marker - CEL expression evaluation
+    if isinstance(value, cel):
+        return _evaluate_cel(value.expr, dependencies)
+
+    # Handle string with ${...} interpolation
     if isinstance(value, str):
-        # Check for ${...} expressions
         if "${" in value and "}" in value:
             # Extract and evaluate CEL expression
             return _evaluate_expression(value, dependencies)
         return value
-    elif isinstance(value, dict):
+
+    # Handle nested structures
+    if isinstance(value, dict):
         return {k: _resolve_value(v, dependencies) for k, v in value.items()}
-    elif isinstance(value, list):
+    if isinstance(value, list):
         return [_resolve_value(item, dependencies) for item in value]
-    else:
-        # Primitive value, return as-is
-        return value
+
+    # Primitive value, return as-is
+    return value
 
 
 def _evaluate_expression(expr_string: str, dependencies: dict[str, ICacheable]) -> Any:
