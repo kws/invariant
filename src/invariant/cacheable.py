@@ -1,16 +1,19 @@
 """Cacheable type boundary: the single source of truth for allowed types.
 
-This module defines the Cacheable Type Universe and provides two core functions
-that are used throughout the Invariant system to validate and convert values.
+This module defines the Cacheable Type Universe and provides the core function
+that validates values throughout the Invariant system.
 
 The Allowed Types (recursive for containers):
   - int, str, bool, None
   - Decimal (safe numerics — no float!)
   - dict[str, CacheableValue]  (string keys only)
   - list[CacheableValue], tuple[CacheableValue, ...]
-  - Any ICacheable implementor
+  - Any ICacheable implementor (domain types like Polynomial)
 
 FORBIDDEN: float (IEEE 754 non-determinism), bytes, arbitrary objects
+
+Native types are stored directly without wrapping. The store codec handles
+serialization of all cacheable types uniformly.
 """
 
 from collections.abc import Mapping, Sequence
@@ -18,7 +21,6 @@ from decimal import Decimal
 from typing import Any
 
 from invariant.protocol import ICacheable
-from invariant.types import DecimalValue, Integer, String
 
 
 def is_cacheable(value: Any) -> bool:
@@ -41,8 +43,6 @@ def is_cacheable(value: Any) -> bool:
         True
         >>> is_cacheable(3.14)  # float is forbidden
         False
-        >>> is_cacheable(Integer(42))
-        True
         >>> is_cacheable({"a": 1, "b": 2})
         True
         >>> is_cacheable([1, 2, 3])
@@ -99,70 +99,3 @@ def is_cacheable(value: Any) -> bool:
 
     # Everything else is forbidden
     return False
-
-
-def to_cacheable(value: Any) -> ICacheable:
-    """Wrap a native cacheable value into its ICacheable form for storage.
-
-    This function converts native types (int, str, Decimal) into their
-    corresponding ICacheable wrappers (Integer, String, DecimalValue).
-    ICacheable values are passed through unchanged.
-
-    Args:
-        value: The value to wrap. Must be cacheable (use is_cacheable first).
-
-    Returns:
-        An ICacheable object suitable for storage in ArtifactStore.
-
-    Raises:
-        TypeError: If value is not cacheable.
-        NotImplementedError: If value is a container (dict/list/tuple).
-            Container wrapping will be implemented when ListArtifact/DictArtifact
-            types are added.
-
-    Examples:
-        >>> to_cacheable(42)
-        Integer(42)
-        >>> to_cacheable("hello")
-        String('hello')
-        >>> to_cacheable(Decimal("3.14"))
-        DecimalValue('3.14')
-        >>> to_cacheable(Integer(42))
-        Integer(42)  # passed through unchanged
-    """
-    # Already ICacheable - pass through
-    if isinstance(value, ICacheable):
-        return value
-
-    # Wrap primitives
-    # Check bool before int since bool is a subclass of int in Python
-    if isinstance(value, bool):
-        return Integer(int(value))
-
-    if isinstance(value, int):
-        return Integer(value)
-
-    if isinstance(value, str):
-        return String(value)
-
-    if isinstance(value, Decimal):
-        return DecimalValue(value)
-
-    if value is None:
-        # None is cacheable but we need an ICacheable representation
-        # For now, we could use a special NoneArtifact, but that's not implemented.
-        # Let's raise NotImplementedError for now.
-        raise NotImplementedError("None values are cacheable but not yet wrappable")
-
-    # Containers - not yet implemented
-    if isinstance(value, (dict, list, tuple)):
-        raise NotImplementedError(
-            f"Container types ({type(value).__name__}) are cacheable but not yet "
-            "wrappable. ListArtifact/DictArtifact types need to be implemented."
-        )
-
-    # Not cacheable
-    raise TypeError(
-        f"Cannot convert {type(value).__name__} to ICacheable. "
-        f"Value must be cacheable (use is_cacheable() to check)."
-    )

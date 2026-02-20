@@ -3,12 +3,10 @@
 import inspect
 from typing import TYPE_CHECKING, Any
 
-from invariant.cacheable import is_cacheable, to_cacheable
+from invariant.cacheable import is_cacheable
 from invariant.expressions import resolve_params
 from invariant.graph import GraphResolver
 from invariant.hashing import hash_manifest
-from invariant.protocol import ICacheable
-from invariant.types import Integer, String
 
 if TYPE_CHECKING:
     from invariant.node import Node
@@ -43,7 +41,7 @@ class Executor:
 
     def execute(
         self, graph: dict[str, "Node"], context: dict[str, Any] | None = None
-    ) -> dict[str, ICacheable]:
+    ) -> dict[str, Any]:
         """Execute a graph and return artifacts for each node.
 
         Args:
@@ -63,8 +61,8 @@ class Executor:
         sorted_nodes = self.resolver.resolve(graph, context_keys=set(context.keys()))
 
         # Track artifacts by node ID and by (op_name, digest) (for deduplication)
-        artifacts_by_node: dict[str, ICacheable] = {}
-        artifacts_by_digest: dict[tuple[str, str], ICacheable] = {}
+        artifacts_by_node: dict[str, Any] = {}
+        artifacts_by_digest: dict[tuple[str, str], Any] = {}
 
         # Inject context values into artifacts_by_node before execution
         # This makes external dependencies available to any node that declares them in deps
@@ -74,8 +72,8 @@ class Executor:
                 raise ValueError(
                     f"Context value for '{key}' is not cacheable, got {type(value)}"
                 )
-            # Wrap native types to ICacheable for storage
-            artifacts_by_node[key] = to_cacheable(value)
+            # Store native types as-is (no wrapping)
+            artifacts_by_node[key] = value
 
         # Execute nodes in topological order
         for node_id in sorted_nodes:
@@ -113,7 +111,7 @@ class Executor:
         node: "Node",
         node_id: str,
         graph: dict[str, "Node"],
-        artifacts_by_node: dict[str, ICacheable],
+        artifacts_by_node: dict[str, Any],
     ) -> dict[str, Any]:
         """Build the input manifest for a node (Phase 1).
 
@@ -131,7 +129,7 @@ class Executor:
             The manifest dictionary mapping parameter names to resolved values.
         """
         # Collect dependency artifacts for ref()/cel() resolution
-        dependencies: dict[str, ICacheable] = {}
+        dependencies: dict[str, Any] = {}
         for dep_id in node.deps:
             if dep_id not in artifacts_by_node:
                 raise ValueError(
@@ -145,7 +143,7 @@ class Executor:
         # ref() and cel() markers in params are resolved using dependencies.
         return resolve_params(node.params, dependencies)
 
-    def _invoke_op(self, op: Any, op_name: str, manifest: dict[str, Any]) -> ICacheable:
+    def _invoke_op(self, op: Any, op_name: str, manifest: dict[str, Any]) -> Any:
         """Invoke an operation with kwargs dispatch and return validation.
 
         Args:
@@ -154,7 +152,7 @@ class Executor:
             manifest: The manifest dictionary mapping parameter names to values.
 
         Returns:
-            An ICacheable artifact (wrapped if necessary).
+            The operation result (native type or ICacheable domain type).
 
         Raises:
             ValueError: If required parameters are missing.
@@ -168,18 +166,6 @@ class Executor:
         for name, param in sig.parameters.items():
             if name in manifest:
                 value = manifest[name]
-                # Basic unwrapping: if function expects native type but got ICacheable wrapper
-                # extract the .value attribute (best-effort, deferred from plan)
-                param_type = param.annotation
-                if param_type is not inspect.Parameter.empty and isinstance(
-                    param_type, type
-                ):
-                    # Try to unwrap ICacheable to native type if function expects native
-                    if param_type is int and isinstance(value, Integer):
-                        value = value.value
-                    elif param_type is str and isinstance(value, String):
-                        value = value.value
-                    # Add more unwrapping cases as needed
                 kwargs[name] = value
             elif param.default is not inspect.Parameter.empty:
                 # Parameter has a default value, skip it
@@ -210,5 +196,5 @@ class Executor:
                 f"which is not a cacheable type"
             )
 
-        # Wrap native types to ICacheable for storage
-        return to_cacheable(result)
+        # Return as-is (no wrapping needed)
+        return result

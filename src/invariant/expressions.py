@@ -100,7 +100,7 @@ from invariant.protocol import ICacheable
 
 
 def resolve_params(
-    params: dict[str, Any], dependencies: dict[str, ICacheable]
+    params: dict[str, Any], dependencies: dict[str, Any]
 ) -> dict[str, Any]:
     """Resolve ${...} CEL expressions in parameter values.
 
@@ -110,7 +110,7 @@ def resolve_params(
 
     Args:
         params: Dictionary of parameter name -> value. Values may contain ${...} expressions.
-        dependencies: Dictionary mapping dependency IDs to their ICacheable artifacts.
+        dependencies: Dictionary mapping dependency IDs to their artifacts (native types or ICacheable).
                     These are exposed as variables in CEL expressions.
 
     Returns:
@@ -126,7 +126,7 @@ def resolve_params(
     return resolved
 
 
-def _resolve_value(value: Any, dependencies: dict[str, ICacheable]) -> Any:
+def _resolve_value(value: Any, dependencies: dict[str, Any]) -> Any:
     """Recursively resolve expressions in a value.
 
     Handles ref() markers (artifact passthrough), cel() markers (CEL expressions),
@@ -134,12 +134,12 @@ def _resolve_value(value: Any, dependencies: dict[str, ICacheable]) -> Any:
 
     Args:
         value: The value to resolve. May be:
-            - ref(dep): Resolves to the ICacheable artifact from dependency
+            - ref(dep): Resolves to the artifact from dependency (native type or ICacheable)
             - cel(expr): Evaluates CEL expression and returns computed value
             - str with ${...}: String interpolation with CEL expressions
             - dict/list: Recursively resolves nested values
             - Other: Returns as-is
-        dependencies: Dictionary of dependency artifacts.
+        dependencies: Dictionary of dependency artifacts (native types or ICacheable).
 
     Returns:
         Resolved value with all markers and expressions evaluated.
@@ -177,7 +177,7 @@ def _resolve_value(value: Any, dependencies: dict[str, ICacheable]) -> Any:
     return value
 
 
-def _evaluate_expression(expr_string: str, dependencies: dict[str, ICacheable]) -> Any:
+def _evaluate_expression(expr_string: str, dependencies: dict[str, Any]) -> Any:
     """Evaluate a CEL expression string.
 
     Args:
@@ -209,22 +209,16 @@ def _evaluate_expression(expr_string: str, dependencies: dict[str, ICacheable]) 
             cel_expr = match.strip()
             evaluated = _evaluate_cel(cel_expr, dependencies)
             # Convert to string for substitution
-            if isinstance(evaluated, ICacheable):
-                # For ICacheable types, extract the value
-                if hasattr(evaluated, "value"):
-                    evaluated = evaluated.value
-                else:
-                    evaluated = str(evaluated)
             result = result.replace(f"${{{match}}}", str(evaluated))
         return result
 
 
-def _evaluate_cel(expression: str, dependencies: dict[str, ICacheable]) -> Any:
+def _evaluate_cel(expression: str, dependencies: dict[str, Any]) -> Any:
     """Evaluate a single CEL expression.
 
     Args:
         expression: The CEL expression to evaluate (without ${...} delimiters).
-        dependencies: Dictionary of dependency artifacts.
+        dependencies: Dictionary of dependency artifacts (native types or ICacheable).
 
     Returns:
         The evaluated result. Must be a type that can be hashed (no floats).
@@ -236,11 +230,11 @@ def _evaluate_cel(expression: str, dependencies: dict[str, ICacheable]) -> Any:
     env = celpy.Environment()
 
     # Convert dependencies to CEL-compatible types
-    var_declarations: dict[str, celtypes.MapType] = {}
+    var_declarations: dict[str, Any] = {}
     for dep_id, artifact in dependencies.items():
-        # Expose artifact as a CEL MapType for field access
-        artifact_map = _artifact_to_cel_map(artifact)
-        var_declarations[dep_id] = artifact_map
+        # Convert artifact to CEL-compatible type
+        cel_value = _value_to_cel(artifact)
+        var_declarations[dep_id] = cel_value
 
     # Compile the expression
     try:
@@ -259,7 +253,7 @@ def _evaluate_cel(expression: str, dependencies: dict[str, ICacheable]) -> Any:
     program = env.program(ast, functions=custom_functions)
 
     # Create activation with variables
-    activation: dict[str, celtypes.MapType] = {}
+    activation: dict[str, Any] = {}
     for var_name, var_value in var_declarations.items():
         activation[var_name] = var_value
 
@@ -278,7 +272,7 @@ def _evaluate_cel(expression: str, dependencies: dict[str, ICacheable]) -> Any:
             f"Use decimal() for fractional arithmetic."
         )
 
-    # If result is a MapType (artifact map), extract the value for simple variable references
+    # If result is a MapType (from ICacheable domain type), extract the value for simple variable references
     if isinstance(result, celtypes.MapType):
         # Check if this is a simple variable reference like ${x}
         # If the map has a 'value' key, extract it
@@ -293,12 +287,53 @@ def _evaluate_cel(expression: str, dependencies: dict[str, ICacheable]) -> Any:
     return _cel_to_python(result, expression)
 
 
-def _artifact_to_cel_map(artifact: ICacheable) -> celtypes.MapType:
-    """Convert an ICacheable artifact to a CEL-compatible MapType.
+def _value_to_cel(value: Any) -> Any:
+    """Convert a value (native type or ICacheable) to a CEL-compatible type.
 
-    Artifacts are exposed as MapType so field access like `background.width` works.
-    For types with a `.value` attribute, expose both the value and the type's fields.
-    For other types, expose their attributes as a map.
+    Native types are exposed directly. ICacheable domain types are converted to MapType
+    for field access.
+
+    Args:
+        value: The value to convert (int, str, Decimal, dict, list, ICacheable, etc.).
+
+    Returns:
+        CEL-compatible value (IntType, StringType, MapType, etc.).
+    """
+    # Native types - expose directly
+    if isinstance(value, int):
+        return celtypes.IntType(value)
+    if isinstance(value, str):
+        return celtypes.StringType(value)
+    if isinstance(value, bool):
+        return celtypes.BoolType(value)
+    if isinstance(value, Decimal):
+        # Decimal is passed through as-is (CEL doesn't have native Decimal)
+        return value
+    if isinstance(value, dict):
+        # Convert dict to CEL MapType recursively
+        result: dict[celtypes.StringType, Any] = {}
+        for key, val in value.items():
+            result[celtypes.StringType(key)] = _value_to_cel(val)
+        return celtypes.MapType(result)
+    if isinstance(value, (list, tuple)):
+        # Convert list/tuple to CEL ListType recursively
+        return celtypes.ListType([_value_to_cel(item) for item in value])
+    if value is None:
+        # None is represented as null in CEL
+        return None
+
+    # ICacheable domain types - convert to MapType for field access
+    if isinstance(value, ICacheable):
+        return _icacheable_to_cel_map(value)
+
+    # Fallback: convert to string
+    return celtypes.StringType(str(value))
+
+
+def _icacheable_to_cel_map(artifact: ICacheable) -> celtypes.MapType:
+    """Convert an ICacheable domain type to a CEL-compatible MapType.
+
+    Exposes all public attributes of the artifact for field access.
 
     Args:
         artifact: The ICacheable artifact to convert.
@@ -308,48 +343,15 @@ def _artifact_to_cel_map(artifact: ICacheable) -> celtypes.MapType:
     """
     result: dict[celtypes.StringType, Any] = {}
 
-    # For types with a .value attribute, expose it
-    if hasattr(artifact, "value"):
-        value = artifact.value
-        # Convert value to appropriate CEL type
-        if isinstance(value, int):
-            result[celtypes.StringType("value")] = celtypes.IntType(value)
-        elif isinstance(value, str):
-            result[celtypes.StringType("value")] = celtypes.StringType(value)
-        elif isinstance(value, Decimal):
-            # Decimal is passed through as-is (CEL doesn't have native Decimal)
-            result[celtypes.StringType("value")] = value
-        elif isinstance(value, bool):
-            result[celtypes.StringType("value")] = celtypes.BoolType(value)
-        else:
-            # For other types, convert to string
-            result[celtypes.StringType("value")] = celtypes.StringType(str(value))
-
     # Expose all public attributes
     for attr_name in dir(artifact):
-        if not attr_name.startswith("_") and attr_name != "value":
+        if not attr_name.startswith("_") and not callable(
+            getattr(artifact, attr_name, None)
+        ):
             try:
                 attr_value = getattr(artifact, attr_name)
-                if not callable(attr_value):
-                    # Convert attribute value to CEL type
-                    if isinstance(attr_value, int):
-                        result[celtypes.StringType(attr_name)] = celtypes.IntType(
-                            attr_value
-                        )
-                    elif isinstance(attr_value, str):
-                        result[celtypes.StringType(attr_name)] = celtypes.StringType(
-                            attr_value
-                        )
-                    elif isinstance(attr_value, bool):
-                        result[celtypes.StringType(attr_name)] = celtypes.BoolType(
-                            attr_value
-                        )
-                    elif isinstance(attr_value, Decimal):
-                        result[celtypes.StringType(attr_name)] = attr_value
-                    else:
-                        result[celtypes.StringType(attr_name)] = celtypes.StringType(
-                            str(attr_value)
-                        )
+                # Convert attribute value to CEL type recursively
+                result[celtypes.StringType(attr_name)] = _value_to_cel(attr_value)
             except AttributeError:
                 pass
 
