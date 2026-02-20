@@ -67,8 +67,8 @@ class TestMemoryStore:
         assert isinstance(retrieved, Decimal)
         assert retrieved == artifact
 
-    def test_serialization_roundtrip(self):
-        """Test that serialization preserves data."""
+    def test_put_get_roundtrip(self):
+        """Test that put/get preserves data."""
         store = MemoryStore()
         op_name = "test:op"
         original = "hello world"

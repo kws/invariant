@@ -102,3 +102,69 @@ def test_commutative_without_canonicalization():
 
     # But without canonicalization, they would have different manifests
     # and thus different cache entries (this is expected behavior)
+
+
+def test_commutative_cache_deduplication():
+    """Test that three nodes with same manifest produce 1 execution + 2 cache hits."""
+    registry = OpRegistry()
+    registry.clear()  # Clear singleton state
+    registry.register("stdlib:identity", identity)
+
+    # Create a counting wrapper around add to track executions
+    call_count = {"add": 0}
+
+    def counting_add(a: int, b: int) -> int:
+        call_count["add"] += 1
+        return add(a, b)
+
+    registry.register("stdlib:add", counting_add)
+
+    # Create graph with three nodes that all resolve to the same manifest
+    # All three use op_name="stdlib:add" with manifest {"a": 3, "b": 7}
+    graph = {
+        # First node: uses min/max canonicalization
+        "sum_xy": Node(
+            op_name="stdlib:add",
+            params={
+                "a": cel("min(x, y)"),
+                "b": cel("max(x, y)"),
+            },
+            deps=["x", "y"],
+        ),
+        # Second node: uses reversed min/max (same result)
+        "sum_yx": Node(
+            op_name="stdlib:add",
+            params={
+                "a": cel("min(y, x)"),
+                "b": cel("max(y, x)"),
+            },
+            deps=["x", "y"],
+        ),
+        # Third node: literal params (no deps needed)
+        "sum_const": Node(
+            op_name="stdlib:add",
+            params={
+                "a": 3,
+                "b": 7,
+            },
+            deps=[],
+        ),
+    }
+
+    context = {
+        "x": 3,
+        "y": 7,
+    }
+
+    store = MemoryStore()
+    executor = Executor(registry=registry, store=store)
+    results = executor.execute(graph, context=context)
+
+    # All three should produce the same result
+    assert results["sum_xy"] == results["sum_yx"] == results["sum_const"] == 10
+
+    # Verify cache behavior: 1 execution, 2 cache hits
+    assert call_count["add"] == 1, "add() should be called exactly once"
+    assert store.stats.hits == 2, "Should have 2 cache hits (sum_yx and sum_const)"
+    assert store.stats.misses == 1, "Should have 1 cache miss (sum_xy)"
+    assert store.stats.puts == 1, "Should have 1 put (sum_xy)"
