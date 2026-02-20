@@ -11,6 +11,15 @@ Invariant is a Python-based deterministic execution engine for DAGs (directed ac
 - **Deduplication:** Identical operations execute only once
 - **Reproducibility:** Bit-for-bit identical outputs across runs
 
+## **Development Setup**
+
+**This project uses Poetry for dependency management and testing.**
+
+- **Run tests:** `poetry run pytest tests/` or `poetry run pytest tests/test_file.py::test_name`
+- **Install dependencies:** `poetry install`
+- **Run Python commands:** `poetry run python ...` or activate shell with `poetry shell`
+- **DO NOT** use bare `python`, `pytest`, or `python -m pytest` — always use `poetry run` or activate the poetry shell first
+
 ## **Critical Constraints (MUST FOLLOW)**
 
 ### **1. Immutability Contract**

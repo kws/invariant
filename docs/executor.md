@@ -84,13 +84,11 @@ For each node (in topological order), the executor runs two phases:
 ├─────────────────────────────────────────────────────────┤
 │  Phase 2: Action Execution                              │
 │                                                         │
-│  Check: artifacts_by_digest[(op_name, digest)]?         │
-│       → Yes: deduplication hit, reuse artifact          │
 │  Check: store.exists(op_name, digest)?                  │
 │       → Yes: cache hit, load from store                 │
 │  Otherwise:                                             │
 │       Invoke op(**kwargs from manifest)                 │
-│       Validate + wrap return value                      │
+│       Validate return value                             │
 │       Store artifact to store                           │
 │                                                         │
 │  Result: ICacheable artifact                            │
@@ -176,13 +174,13 @@ The Manifest is hashed to produce a **Digest** — a 64-character hex SHA-256 st
 
 The cache key is the tuple `(op_name, digest)`. This composite key ensures that different operations with the same input manifest cache separately — two different ops could receive identical inputs but produce different outputs.
 
-The executor checks three levels, in order:
+The executor checks two levels, in order:
 
-1. **In-memory deduplication** (`artifacts_by_digest` dict): A run-local dict keyed by `(op_name, digest)`. If two nodes in the same graph execution produce the same op+digest, the second one reuses the first's artifact without hitting the store.
+1. **Store cache** (`store.exists(op_name, digest)`): Checks the configured `ArtifactStore`. If found, loads the artifact via `store.get()`.
 
-2. **Store cache** (`store.exists(op_name, digest)`): Checks the configured `ArtifactStore`. If found, loads the artifact and also populates the deduplication dict.
+2. **Execution:** If the store check misses, the op is invoked and the result is stored via `store.put()`.
 
-3. **Execution:** If neither check hits, the op is invoked.
+All cache lookups go through the configured store, which provides a single, observable cache layer. Stores track cache statistics (hits, misses, puts) via the `store.stats` attribute.
 
 ### 4.2 Operation Invocation
 
@@ -231,9 +229,8 @@ def add(a: int, b: int) -> int:
 
 After execution (or cache retrieval), the artifact is:
 
-1. Stored in the `ArtifactStore` under `(op_name, digest)`
-2. Stored in the run-local `artifacts_by_digest` dict for deduplication
-3. Stored in `artifacts_by_node[node_id]` for downstream dependency resolution
+1. Stored in the `ArtifactStore` under `(op_name, digest)` (if cache miss)
+2. Stored in `artifacts_by_node[node_id]` for downstream dependency resolution
 
 ---
 
@@ -306,14 +303,20 @@ All stores implement `ArtifactStore` (abstract base class):
 
 ```python
 class ArtifactStore(ABC):
+    def __init__(self) -> None:
+        self.stats = CacheStats()  # Cache statistics (hits, misses, puts)
+    
     def exists(self, op_name: str, digest: str) -> bool: ...
     def get(self, op_name: str, digest: str) -> ICacheable: ...
     def put(self, op_name: str, digest: str, artifact: ICacheable) -> None: ...
+    def reset_stats(self) -> None: ...  # Reset statistics to zero
 ```
 
 The composite key `(op_name, digest)` ensures that different operations with identical input manifests cache separately.
 
-**Serialization format** (used by both MemoryStore and DiskStore):
+**Cache statistics:** All stores track cache performance via `store.stats` (a `CacheStats` object with `hits`, `misses`, and `puts` attributes).
+
+**Serialization format** (used by DiskStore):
 
 ```
 [4 bytes: type_name_length][type_name_utf8][serialized_artifact_bytes]
@@ -333,9 +336,10 @@ from invariant.store.memory import MemoryStore
 store = MemoryStore()
 ```
 
-- Artifacts are serialized to bytes on `put()` and deserialized on `get()`
+- Artifacts are stored as raw Python objects (no serialization)
+- Relies on the immutability contract: artifacts are frozen once created
 - Lost when the store instance is garbage collected
-- Supports `clear()` method for test cleanup
+- Supports `clear()` method for test cleanup (also resets statistics)
 
 ### 7.3 DiskStore
 
