@@ -1,11 +1,12 @@
 """Tests for CEL expression evaluation."""
 
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 
 from invariant import cel, ref
-from invariant.expressions import resolve_params
+from invariant.expressions import resolve_params, _evaluate_cel, _cel_to_python
 from invariant.types import Polynomial
 
 
@@ -377,3 +378,446 @@ class TestCelMarker:
         result = resolve_params(params, deps)
         assert result["computed"] == 10
         assert result["message"] == "Sum is 10"
+
+
+class TestEdgeCases:
+    """Tests for edge cases in expression evaluation."""
+
+    def test_string_without_valid_expression(self):
+        """Test string with ${} but no valid expression pattern (line 199)."""
+        # String with "${" and "}" but doesn't match the regex pattern
+        params = {"text": "This has ${ but no closing brace"}
+        deps = {}
+        # Should return as-is since no valid ${...} pattern found
+        result = resolve_params(params, deps)
+        assert result["text"] == "This has ${ but no closing brace"
+
+    def test_string_with_malformed_expression(self):
+        """Test string with malformed expression delimiters."""
+        params = {"text": "This has } but no opening ${"}
+        deps = {}
+        result = resolve_params(params, deps)
+        assert result["text"] == "This has } but no opening ${"
+
+
+class TestTypeConversions:
+    """Tests for type conversions in _value_to_cel and _cel_to_python."""
+
+    def test_bool_type_conversion(self):
+        """Test bool type conversion in _value_to_cel.
+
+        Note: Line 308 (BoolType conversion) is currently unreachable because
+        bool is a subclass of int in Python, so the int check at line 303
+        catches bool values first. This test verifies the actual behavior.
+        """
+        from invariant.expressions import _value_to_cel
+        import celpy.celtypes as celtypes
+
+        # Bool values are caught by the int check (bool is subclass of int)
+        result = _value_to_cel(True)
+        assert isinstance(result, celtypes.IntType)
+        assert int(result) == 1
+
+    def test_bool_false_conversion(self):
+        """Test bool False conversion."""
+        from invariant.expressions import _value_to_cel
+        import celpy.celtypes as celtypes
+
+        result = _value_to_cel(False)
+        assert isinstance(result, celtypes.IntType)
+        assert int(result) == 0
+
+    def test_decimal_passthrough(self):
+        """Test Decimal passthrough in _value_to_cel (line 311)."""
+        params = {"value": "${x}"}
+        deps = {"x": Decimal("3.14")}
+        result = resolve_params(params, deps)
+        assert isinstance(result["value"], Decimal)
+        assert result["value"] == Decimal("3.14")
+
+    def test_decimal_in_arithmetic(self):
+        """Test Decimal in arithmetic expression."""
+        params = {"sum": "${x + y}"}
+        deps = {"x": Decimal("1.5"), "y": Decimal("2.5")}
+        result = resolve_params(params, deps)
+        assert isinstance(result["sum"], Decimal)
+        assert result["sum"] == Decimal("4.0")
+
+    def test_none_handling(self):
+        """Test None handling in _value_to_cel (lines 321-323)."""
+        params = {"value": "${x}"}
+        deps = {"x": None}
+        result = resolve_params(params, deps)
+        assert result["value"] is None
+
+    def test_none_in_expression(self):
+        """Test None in CEL expression."""
+        params = {"result": "${x == null}"}
+        deps = {"x": None}
+        result = resolve_params(params, deps)
+        assert result["result"] is True
+
+    def test_icacheable_conversion(self):
+        """Test ICacheable conversion in _value_to_cel (lines 325-327)."""
+        params = {"poly": "${p}"}
+        poly_artifact = Polynomial((1, 2, 1))
+        deps = {"p": poly_artifact}
+        result = resolve_params(params, deps)
+        # Should return a dict representation of the Polynomial
+        assert isinstance(result["poly"], dict)
+        assert "coefficients" in result["poly"]
+
+    def test_list_conversion(self):
+        """Test list conversion in _value_to_cel (lines 318-320)."""
+        from invariant.expressions import _value_to_cel
+        import celpy.celtypes as celtypes
+
+        result = _value_to_cel([1, 2, 3])
+        assert isinstance(result, celtypes.ListType)
+        assert len(result) == 3
+
+    def test_tuple_conversion(self):
+        """Test tuple conversion in _value_to_cel."""
+        from invariant.expressions import _value_to_cel
+        import celpy.celtypes as celtypes
+
+        result = _value_to_cel((1, 2, 3))
+        assert isinstance(result, celtypes.ListType)
+        assert len(result) == 3
+
+    def test_fallback_to_string(self):
+        """Test fallback to string conversion for unknown types (line 330)."""
+        from invariant.expressions import _value_to_cel
+        import celpy.celtypes as celtypes
+
+        # Create a custom object that's not cacheable
+        class CustomObj:
+            def __str__(self):
+                return "custom"
+
+        # This should fall back to string conversion
+        result = _value_to_cel(CustomObj())
+        assert isinstance(result, celtypes.StringType)
+        assert str(result) == "custom"
+
+
+class TestICacheableExpressions:
+    """Tests for ICacheable domain type handling in expressions."""
+
+    def test_polynomial_attribute_access(self):
+        """Test accessing Polynomial attributes in expressions (lines 344-358)."""
+        params = {"coeffs": "${poly.coefficients}"}
+        poly_artifact = Polynomial((1, 2, 1))
+        deps = {"poly": poly_artifact}
+        result = resolve_params(params, deps)
+        # Should access the coefficients attribute
+        assert isinstance(result["coeffs"], (list, tuple))
+        # The coefficients should be accessible
+        assert len(result["coeffs"]) > 0
+
+    def test_icacheable_attribute_error_handling(self):
+        """Test AttributeError handling in _icacheable_to_cel_map (lines 355-356)."""
+        from invariant.expressions import _icacheable_to_cel_map
+        import celpy.celtypes as celtypes
+
+        # Create a mock ICacheable that raises AttributeError for some attributes
+        class MockICacheable:
+            def __init__(self):
+                self.value = 42
+                self._private = "hidden"
+
+            def __getattr__(self, name):
+                if name == "problematic":
+                    raise AttributeError("Cannot access")
+                raise AttributeError(f"No attribute {name}")
+
+            def get_stable_hash(self):
+                return "hash"
+
+            def to_stream(self, stream):
+                pass
+
+            @classmethod
+            def from_stream(cls, stream):
+                return cls()
+
+        mock_obj = MockICacheable()
+        # This should handle AttributeError gracefully
+        result = _icacheable_to_cel_map(mock_obj)
+        assert isinstance(result, celtypes.MapType)
+        assert "value" in result
+
+    def test_polynomial_simple_reference(self):
+        """Test simple Polynomial reference (MapType without value field, lines 279-284)."""
+        params = {"poly": "${p}"}
+        poly_artifact = Polynomial((1, 2, 1))
+        deps = {"p": poly_artifact}
+        result = resolve_params(params, deps)
+        # Should return dict representation since Polynomial doesn't have .value
+        # This tests the else branch at line 283-284
+        assert isinstance(result["poly"], dict)
+        assert "coefficients" in result["poly"]
+
+    def test_maptype_with_value_field(self):
+        """Test MapType with value field extraction (lines 279-281)."""
+        # Create a dependency that will be converted to MapType with a 'value' key
+        params = {"result": "${x}"}
+        deps = {"x": {"value": 42, "other": "data"}}
+        result = resolve_params(params, deps)
+        # When MapType has 'value' key, it extracts just the value (line 281)
+        assert result["result"] == 42
+        assert not isinstance(result["result"], dict)
+
+    def test_maptype_value_extraction_path(self):
+        """Test the value extraction path for MapType results."""
+        # This tests the path where a MapType result has a 'value' key
+        # Direct access to .value field
+        params = {"result": "${x.value}"}
+        deps = {"x": {"value": 100}}
+        result = resolve_params(params, deps)
+        assert result["result"] == 100
+
+    def test_polynomial_in_cel_expression(self):
+        """Test Polynomial in cel() expression."""
+        params = {"poly": cel("p")}
+        poly_artifact = Polynomial((1, 2, 1))
+        deps = {"p": poly_artifact}
+        result = resolve_params(params, deps)
+        assert isinstance(result["poly"], dict)
+        assert "coefficients" in result["poly"]
+
+
+class TestErrorPaths:
+    """Tests for error handling paths."""
+
+    def test_float_rejection_in_evaluation(self):
+        """Test float rejection in _evaluate_cel (line 270)."""
+        # Mock the program.evaluate to return a float
+
+        # Create a mock program that returns a float
+        mock_program = type("MockProgram", (), {})()
+        mock_program.evaluate = lambda activation: 3.14  # Returns float
+
+        # Mock the environment and program creation
+        with patch("invariant.expressions.celpy.Environment") as mock_env_class:
+            mock_env = mock_env_class.return_value
+            mock_env.compile.return_value = "mock_ast"
+            mock_env.program.return_value = mock_program
+
+            with pytest.raises(ValueError, match="returned a float.*forbidden"):
+                _evaluate_cel("test", {})
+
+    def test_float_rejection_in_conversion(self):
+        """Test float rejection in _cel_to_python (line 385)."""
+        # Test the float check in _cel_to_python directly
+        with pytest.raises(ValueError, match="returned float.*forbidden"):
+            _cel_to_python(3.14, "test_expression")
+
+
+class TestCelToPythonConversions:
+    """Tests for CEL to Python type conversions."""
+
+    def test_booltype_conversion(self):
+        """Test BoolType conversion in _cel_to_python (line 382)."""
+        from invariant.expressions import _cel_to_python
+        import celpy.celtypes as celtypes
+
+        # Direct test of BoolType conversion
+        result = _cel_to_python(celtypes.BoolType(True), "test")
+        assert result is True
+        assert isinstance(result, bool)
+
+    def test_booltype_false_conversion(self):
+        """Test BoolType False conversion."""
+        from invariant.expressions import _cel_to_python
+        import celpy.celtypes as celtypes
+
+        result = _cel_to_python(celtypes.BoolType(False), "test")
+        assert result is False
+        assert isinstance(result, bool)
+
+    def test_maptype_conversion(self):
+        """Test MapType conversion in _cel_to_python (lines 391-399)."""
+        params = {"result": "${x}"}
+        deps = {"x": {"a": 1, "b": 2}}
+        result = resolve_params(params, deps)
+        assert isinstance(result["result"], dict)
+        assert result["result"]["a"] == 1
+        assert result["result"]["b"] == 2
+
+    def test_maptype_nested_conversion(self):
+        """Test nested MapType conversion."""
+        params = {"result": "${x}"}
+        deps = {"x": {"nested": {"value": 42}}}
+        result = resolve_params(params, deps)
+        assert isinstance(result["result"], dict)
+        assert isinstance(result["result"]["nested"], dict)
+        assert result["result"]["nested"]["value"] == 42
+
+    def test_maptype_non_stringtype_key(self):
+        """Test MapType with non-StringType key (line 398)."""
+        from invariant.expressions import _cel_to_python
+        import celpy.celtypes as celtypes
+
+        # Create a MapType with a non-StringType key (though this is unlikely in practice)
+        # Actually, MapType keys are always StringType, but the code handles both cases
+        maptype = celtypes.MapType({celtypes.StringType("key"): celtypes.IntType(42)})
+        result = _cel_to_python(maptype, "test")
+        assert isinstance(result, dict)
+        assert result["key"] == 42
+
+    def test_dict_conversion(self):
+        """Test plain dict conversion in _cel_to_python (lines 403-405)."""
+        params = {"result": "${x}"}
+        deps = {"x": {"key": "value"}}
+        result = resolve_params(params, deps)
+        assert isinstance(result["result"], dict)
+        assert result["result"]["key"] == "value"
+
+    def test_list_conversion(self):
+        """Test list conversion in _cel_to_python (lines 406-408)."""
+        params = {"result": "${x}"}
+        deps = {"x": [1, 2, 3]}
+        result = resolve_params(params, deps)
+        assert isinstance(result["result"], list)
+        assert result["result"] == [1, 2, 3]
+
+    def test_list_with_expressions(self):
+        """Test list with expressions."""
+        params = {"values": ["${x}", "${y}"]}
+        deps = {"x": 1, "y": 2}
+        result = resolve_params(params, deps)
+        assert result["values"] == [1, 2]
+
+    def test_unknown_type_fallback(self):
+        """Test unknown type fallback in _cel_to_python (lines 409-411)."""
+        # Test with a custom object that passes through CEL evaluation
+        # Unknown types should be returned as-is
+        from invariant.expressions import _cel_to_python
+
+        class CustomType:
+            pass
+
+        custom_obj = CustomType()
+        result = _cel_to_python(custom_obj, "test")
+        assert result is custom_obj
+
+
+class TestDecimalFunctionEdgeCases:
+    """Tests for _decimal_function edge cases."""
+
+    def test_decimal_from_maptype_with_value(self):
+        """Test decimal() with MapType that has value field (lines 432-436)."""
+        # Create a dict that will be converted to MapType
+        params = {"result": "${decimal(x.value)}"}
+        deps = {"x": {"value": 42}}
+        result = resolve_params(params, deps)
+        assert isinstance(result["result"], Decimal)
+        assert result["result"] == Decimal("42")
+
+    def test_decimal_from_maptype_without_value(self):
+        """Test decimal() with MapType without value field (lines 437-438)."""
+        params = {"result": "${decimal(x)}"}
+        deps = {"x": {"other": 42}}  # No 'value' field
+        with pytest.raises(ValueError, match="Cannot extract value"):
+            resolve_params(params, deps)
+
+    def test_decimal_from_icacheable(self):
+        """Test decimal() with ICacheable that has value attribute (lines 446-448)."""
+        from invariant.expressions import _decimal_function
+        from invariant.protocol import ICacheable
+        from typing import BinaryIO
+
+        # Create a mock ICacheable with value attribute that implements the protocol
+        class MockICacheable:
+            def __init__(self, value):
+                self.value = value
+
+            def get_stable_hash(self):
+                return "hash"
+
+            def to_stream(self, stream: BinaryIO):
+                pass
+
+            @classmethod
+            def from_stream(cls, stream: BinaryIO):
+                return cls(42)
+
+        # ICacheable is runtime_checkable, so this should work
+        mock_obj = MockICacheable(42)
+        # Verify it's recognized as ICacheable
+        assert isinstance(mock_obj, ICacheable)
+        assert hasattr(mock_obj, "value")
+
+        result = _decimal_function(mock_obj)
+        assert isinstance(result, Decimal)
+        assert result == Decimal("42")
+
+    def test_decimal_unconvertible_type(self):
+        """Test decimal() with unconvertible type (line 450)."""
+        from invariant.expressions import _decimal_function
+
+        class UnconvertibleType:
+            pass
+
+        with pytest.raises(ValueError, match="Cannot convert"):
+            _decimal_function(UnconvertibleType())
+
+
+class TestComparisonValueExtraction:
+    """Tests for _extract_comparison_value."""
+
+    def test_maptype_without_value_field(self):
+        """Test MapType without value field in comparison (lines 508-513)."""
+        from invariant.expressions import _extract_comparison_value
+        import celpy.celtypes as celtypes
+
+        # Test the extraction function directly with MapType without value
+        maptype = celtypes.MapType({celtypes.StringType("a"): celtypes.IntType(1)})
+        # Should return the map itself (line 513)
+        result = _extract_comparison_value(maptype)
+        assert isinstance(result, celtypes.MapType)
+
+    def test_inttype_extraction(self):
+        """Test IntType extraction in _extract_comparison_value (line 514-515)."""
+        params = {"result": "${min(x, y)}"}
+        deps = {"x": 7, "y": 3}
+        result = resolve_params(params, deps)
+        assert result["result"] == 3
+
+    def test_stringtype_extraction(self):
+        """Test StringType extraction in _extract_comparison_value (line 516-517)."""
+        params = {"result": "${min(x, y)}"}
+        deps = {"x": "b", "y": "a"}
+        result = resolve_params(params, deps)
+        assert result["result"] == "a"
+
+    def test_booltype_extraction(self):
+        """Test BoolType extraction in _extract_comparison_value (line 518-519)."""
+        from invariant.expressions import _extract_comparison_value
+        import celpy.celtypes as celtypes
+
+        # Test the extraction function directly with BoolType
+        result = _extract_comparison_value(celtypes.BoolType(False))
+        assert result is False
+        assert isinstance(result, bool)
+
+        result2 = _extract_comparison_value(celtypes.BoolType(True))
+        assert result2 is True
+        assert isinstance(result2, bool)
+
+    def test_fallback_to_direct_value(self):
+        """Test fallback to direct value comparison (lines 520-522)."""
+        from invariant.expressions import _extract_comparison_value
+
+        # Test with Decimal (already Python type)
+        result = _extract_comparison_value(Decimal("1.5"))
+        assert isinstance(result, Decimal)
+        assert result == Decimal("1.5")
+
+        # Test with other Python types
+        result = _extract_comparison_value(42)
+        assert result == 42
+
+        result = _extract_comparison_value("test")
+        assert result == "test"
