@@ -1,6 +1,7 @@
 """ChainStore: Composite artifact store chaining MemoryStore and DiskStore."""
 
-from invariant.protocol import ICacheable
+from typing import Any
+
 from invariant.store.base import ArtifactStore
 from invariant.store.disk import DiskStore
 from invariant.store.memory import MemoryStore
@@ -47,7 +48,7 @@ class ChainStore(ArtifactStore):
         # Check L2 (slower, but persistent)
         return self.l2.exists(op_name, digest)
 
-    def get(self, op_name: str, digest: str) -> ICacheable:
+    def get(self, op_name: str, digest: str) -> Any:
         """Retrieve an artifact from L1 or L2.
 
         If found in L2 but not L1, promotes the artifact to L1 for faster
@@ -58,7 +59,7 @@ class ChainStore(ArtifactStore):
             digest: The SHA-256 hash (64 character hex string) of the manifest.
 
         Returns:
-            The deserialized ICacheable artifact.
+            The deserialized artifact (native type or ICacheable domain type).
 
         Raises:
             KeyError: If artifact does not exist in either store.
@@ -79,13 +80,13 @@ class ChainStore(ArtifactStore):
             f"Artifact with op_name '{op_name}' and digest '{digest}' not found in L1 or L2"
         )
 
-    def put(self, op_name: str, digest: str, artifact: ICacheable) -> None:
+    def put(self, op_name: str, digest: str, artifact: Any) -> None:
         """Store an artifact in both L1 and L2.
 
         Args:
             op_name: The name of the operation that produced the artifact.
             digest: The SHA-256 hash (64 character hex string) of the manifest.
-            artifact: The ICacheable artifact to store.
+            artifact: The artifact to store (must be cacheable).
         """
         # Write to both stores
         self.l1.put(op_name, digest, artifact)

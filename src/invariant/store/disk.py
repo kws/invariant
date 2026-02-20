@@ -1,11 +1,11 @@
 """DiskStore: Filesystem-based artifact storage."""
 
-import importlib
-from io import BytesIO
 from pathlib import Path
+from typing import Any
 
-from invariant.protocol import ICacheable
+from invariant.cacheable import is_cacheable
 from invariant.store.base import ArtifactStore
+from invariant.store.codec import deserialize, serialize
 
 
 class DiskStore(ArtifactStore):
@@ -57,7 +57,7 @@ class DiskStore(ArtifactStore):
         path = self._get_path(op_name, digest)
         return path.exists()
 
-    def get(self, op_name: str, digest: str) -> ICacheable:
+    def get(self, op_name: str, digest: str) -> Any:
         """Retrieve an artifact by operation name and digest.
 
         Raises:
@@ -74,47 +74,28 @@ class DiskStore(ArtifactStore):
         with open(path, "rb") as f:
             data = f.read()
 
-        # Parse: [4 bytes: type_name_len][type_name][serialized_data]
-        type_name_len = int.from_bytes(data[:4], byteorder="big")
-        type_name_bytes = data[4 : 4 + type_name_len]
-        type_name = type_name_bytes.decode("utf-8")
-        serialized_data = data[4 + type_name_len :]
+        # Deserialize using codec
+        return deserialize(data)
 
-        # Import the class
-        module_path, class_name = type_name.rsplit(".", 1)
-        module = importlib.import_module(module_path)
-        cls = getattr(module, class_name)
-
-        # Deserialize
-        stream = BytesIO(serialized_data)
-        return cls.from_stream(stream)
-
-    def put(self, op_name: str, digest: str, artifact: ICacheable) -> None:
+    def put(self, op_name: str, digest: str, artifact: Any) -> None:
         """Store an artifact with the given operation name and digest."""
+        # Validate artifact is cacheable
+        if not is_cacheable(artifact):
+            raise TypeError(
+                f"Artifact is not cacheable: {type(artifact)}. "
+                f"Use is_cacheable() to check values before storing."
+            )
+
         path = self._get_path(op_name, digest)
 
         # Create parent directory if needed
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Serialize the artifact
-        stream = BytesIO()
-        artifact.to_stream(stream)
-        serialized_data = stream.getvalue()
-
-        # Store type information with the data
-        type_name = f"{artifact.__class__.__module__}.{artifact.__class__.__name__}"
-        type_name_bytes = type_name.encode("utf-8")
-        type_name_len = len(type_name_bytes)
-
-        # Combine: [4 bytes: type_name_len][type_name][serialized_data]
-        combined = (
-            type_name_len.to_bytes(4, byteorder="big")
-            + type_name_bytes
-            + serialized_data
-        )
+        # Serialize using codec
+        serialized_data = serialize(artifact)
 
         # Write atomically (write to temp file, then rename)
         temp_path = path.with_suffix(path.suffix + ".tmp")
         with open(temp_path, "wb") as f:
-            f.write(combined)
+            f.write(serialized_data)
         temp_path.replace(path)

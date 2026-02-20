@@ -1,8 +1,7 @@
 """Base class for ArtifactStore implementations."""
 
 from abc import ABC, abstractmethod
-
-from invariant.protocol import ICacheable
+from typing import Any
 
 
 class ArtifactStore(ABC):
@@ -27,7 +26,7 @@ class ArtifactStore(ABC):
         ...
 
     @abstractmethod
-    def get(self, op_name: str, digest: str) -> ICacheable:
+    def get(self, op_name: str, digest: str) -> Any:
         """Retrieve an artifact by operation name and digest.
 
         Args:
@@ -35,7 +34,7 @@ class ArtifactStore(ABC):
             digest: The SHA-256 hash (64 character hex string) of the manifest.
 
         Returns:
-            The deserialized ICacheable artifact.
+            The deserialized artifact (native type or ICacheable domain type).
 
         Raises:
             KeyError: If artifact does not exist.
@@ -43,12 +42,12 @@ class ArtifactStore(ABC):
         ...
 
     @abstractmethod
-    def put(self, op_name: str, digest: str, artifact: ICacheable) -> None:
+    def put(self, op_name: str, digest: str, artifact: Any) -> None:
         """Store an artifact with the given operation name and digest.
 
         Args:
             op_name: The name of the operation that produced the artifact.
             digest: The SHA-256 hash (64 character hex string) of the manifest.
-            artifact: The ICacheable artifact to store.
+            artifact: The artifact to store (must be cacheable).
         """
         ...
