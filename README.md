@@ -18,7 +18,7 @@ git clone <repository-url>
 cd invariant
 
 # Install dependencies
-poetry install
+uv sync
 ```
 
 ## Quick Start
@@ -98,16 +98,16 @@ Invariant separates graph definition from execution in two phases:
 
 ```bash
 # Run tests
-poetry run pytest
+uv run pytest
 
 # Run tests with coverage
-poetry run pytest --cov=src --cov-report=html
+uv run pytest --cov=src --cov-report=html
 
 # Run linting
-poetry run ruff check src/ tests/
+uv run ruff check src/ tests/
 
 # Format code
-poetry run ruff format src/ tests/
+uv run ruff format src/ tests/
 ```
 
 ## License

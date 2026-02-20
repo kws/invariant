@@ -13,12 +13,12 @@ Invariant is a Python-based deterministic execution engine for DAGs (directed ac
 
 ## **Development Setup**
 
-**This project uses Poetry for dependency management and testing.**
+**This project uses uv for dependency management and testing.**
 
-- **Run tests:** `poetry run pytest tests/` or `poetry run pytest tests/test_file.py::test_name`
-- **Install dependencies:** `poetry install`
-- **Run Python commands:** `poetry run python ...` or activate shell with `poetry shell`
-- **DO NOT** use bare `python`, `pytest`, or `python -m pytest` — always use `poetry run` or activate the poetry shell first
+- **Run tests:** `uv run pytest tests/` or `uv run pytest tests/test_file.py::test_name`
+- **Install dependencies:** `uv sync`
+- **Run Python commands:** `uv run python ...`
+- **DO NOT** use bare `python`, `pytest`, or `python -m pytest` — always use `uv run` first
 
 ## **Critical Constraints (MUST FOLLOW)**
 

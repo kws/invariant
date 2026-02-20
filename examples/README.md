@@ -10,7 +10,7 @@ Demonstrates Invariant's core capabilities using polynomial arithmetic to verify
 
 **Run:**
 ```bash
-poetry run python examples/polynomial_distributive.py
+uv run python examples/polynomial_distributive.py
 ```
 
 The example creates three polynomials from coefficient lists, then computes both sides of the distributive law through different paths in the DAG:
@@ -110,7 +110,7 @@ The engine correctly treats these as distinct computations because it has no kno
 
 **Run:**
 ```bash
-poetry run python examples/commutative_canonicalization.py
+uv run python examples/commutative_canonicalization.py
 ```
 
 **Example pattern:**
