@@ -588,31 +588,21 @@ The following items are **disagreements or ambiguities** between documentation a
 
 ---
 
-### F-02: Context Values as Plain Dicts
+### F-02: Context Values as Plain Dicts [RESOLVED]
 
-**Documentation says** (architecture.md §7):
-```python
-root = {"width": 144, "height": 144}
-results = executor.execute(graph, context={"root": root})
-```
+**Original issue:** Documentation showed plain dicts in context (e.g., `{"width": 144, "height": 144}`), but implementation was thought to require `to_cacheable()` wrapping which raised `NotImplementedError` for dicts.
 
-**Implementation requires** context values to be ICacheable. The executor calls `is_cacheable(value)` and then `to_cacheable(value)` on each context value. For plain dicts, `is_cacheable()` returns `True` (dicts with string keys and cacheable values are accepted), but `to_cacheable()` raises `NotImplementedError` because `DictArtifact` is not yet implemented.
+**Resolution:** The executor now stores native types (including dicts) as-is without wrapping. Plain dicts in context work correctly. The architecture.md example is now fully supported.
 
-**Impact:** The architecture.md example with `root` as a plain dict **does not work** with the current implementation. The e2e context tests work around this by using separate `Integer` values instead.
-
-**Source:** `cacheable.py` `to_cacheable()` line 158 — `NotImplementedError` for container types.
+**Source:** `executor.py` lines 68-75 — context values are validated with `is_cacheable()` and stored directly.
 
 ---
 
-### F-03: `poly:scale` Parameter Type
+### F-03: `poly:scale` Parameter Type [RESOLVED]
 
-**Documentation says** (architecture.md §8.3): `poly:scale` takes `scalar: Integer`.
+**Original issue:** Documentation showed `poly:scale` takes `scalar: Integer` and `poly:evaluate` takes `x: Integer` and returns `Integer`, but implementation uses native `int` types.
 
-**Implementation:** `poly_scale(poly: Polynomial, scalar: int)` — takes native `int`, not `Integer`.
-
-**Impact:** Minimal — the executor's type unwrapping (`_invoke_op`) would convert `Integer` → `int` when the function signature expects `int`. But the documented type annotation is inaccurate.
-
-**Source:** `ops/poly.py` `poly_scale()` signature.
+**Resolution:** Documentation has been updated in architecture.md §8.3 to reflect that both `poly:scale` and `poly:evaluate` use native `int` types, matching the actual implementation in `ops/poly.py`.
 
 ---
 

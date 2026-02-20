@@ -119,7 +119,7 @@ The engine traverses the user-defined DAG. For each Node, it resolves param mark
 
 A singleton registry mapping string identifiers to executable Python callables.
 
-* *Role:* Decouples the "string" name in the YAML/JSON definition from the actual Python code.
+* *Role:* Decouples the "string" name in the graph definition from the actual Python code.
 * *Package Registration:* Supports grouping related operations into packages via `register_package(prefix, ops)`, which registers all ops from a package under a common prefix (e.g., `"poly:add"`, `"poly:multiply"`).
 * *Auto-Discovery:* The `auto_discover()` method automatically discovers and registers op packages from Python entry points (group `"invariant.ops"`), enabling third-party packages to provide operations without explicit registration.
 
@@ -376,9 +376,9 @@ The following operations are implemented as plain Python functions with typed pa
 | `poly:from_coefficients` | `coefficients: list[int]` | `Polynomial` | Strips trailing zeros for canonical form |
 | `poly:add` | `a: Polynomial, b: Polynomial` | `Polynomial` | Pairwise addition, zero-pad shorter polynomial |
 | `poly:multiply` | `a: Polynomial, b: Polynomial` | `Polynomial` | Convolution of coefficient lists |
-| `poly:scale` | `poly: Polynomial, scalar: Integer` | `Polynomial` | Multiply every coefficient by scalar |
+| `poly:scale` | `poly: Polynomial, scalar: int` | `Polynomial` | Multiply every coefficient by scalar |
 | `poly:derivative` | `poly: Polynomial` | `Polynomial` | `c[i] * i` shifted down one degree |
-| `poly:evaluate` | `poly: Polynomial, x: Integer` | `Integer` | Horner's method, pure integer result |
+| `poly:evaluate` | `poly: Polynomial, x: int` | `int` | Horner's method, pure integer result |
 
 All ops are plain Python functions with standard type annotations. The Executor inspects function signatures and maps resolved params to function arguments by name, performing best-effort type unwrapping (e.g., `Integer` → `int`) when needed.
 
