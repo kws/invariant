@@ -1,11 +1,14 @@
 """Executor: The runtime engine for executing DAGs."""
 
+import inspect
 from typing import TYPE_CHECKING, Any
 
+from invariant.cacheable import is_cacheable, to_cacheable
 from invariant.expressions import resolve_params
 from invariant.graph import GraphResolver
 from invariant.hashing import hash_manifest
 from invariant.protocol import ICacheable
+from invariant.types import Integer, String
 
 if TYPE_CHECKING:
     from invariant.node import Node
@@ -66,12 +69,13 @@ class Executor:
         # Inject context values into artifacts_by_node before execution
         # This makes external dependencies available to any node that declares them in deps
         for key, value in context.items():
-            # Context values must be ICacheable
-            if not isinstance(value, ICacheable):
+            # Context values must be cacheable
+            if not is_cacheable(value):
                 raise ValueError(
-                    f"Context value for '{key}' must be ICacheable, got {type(value)}"
+                    f"Context value for '{key}' is not cacheable, got {type(value)}"
                 )
-            artifacts_by_node[key] = value
+            # Wrap native types to ICacheable for storage
+            artifacts_by_node[key] = to_cacheable(value)
 
         # Execute nodes in topological order
         for node_id in sorted_nodes:
@@ -94,7 +98,7 @@ class Executor:
             else:
                 # Cache miss: execute operation
                 op = self.registry.get(node.op_name)
-                artifact = op(manifest)
+                artifact = self._invoke_op(op, node.op_name, manifest)
 
                 # Persist to store
                 self.store.put(node.op_name, digest, artifact)
@@ -113,6 +117,10 @@ class Executor:
     ) -> dict[str, Any]:
         """Build the input manifest for a node (Phase 1).
 
+        The manifest is built entirely from resolved params. Dependencies are NOT
+        injected into the manifest directly - they are only available for ref()/cel()
+        resolution within params.
+
         Args:
             node: The node to build manifest for.
             node_id: The ID of the node.
@@ -120,17 +128,9 @@ class Executor:
             artifacts_by_node: Already computed artifacts for upstream nodes.
 
         Returns:
-            The manifest dictionary mapping input names to values.
+            The manifest dictionary mapping parameter names to resolved values.
         """
-        manifest: dict[str, any] = {}
-
-        # Add static parameters
-        manifest.update(node.params)
-
-        # Add upstream artifacts
-        # Upstream artifacts are added to the manifest using their dependency ID as the key.
-        # This allows ops to access upstream results by node ID, and also allows
-        # CEL expressions to reference them (e.g., ${background.width}).
+        # Collect dependency artifacts for ref()/cel() resolution
         dependencies: dict[str, ICacheable] = {}
         for dep_id in node.deps:
             if dep_id not in artifacts_by_node:
@@ -139,16 +139,76 @@ class Executor:
                     f"This should not happen if graph is topologically sorted or "
                     f"if '{dep_id}' is provided in context."
                 )
-            # Add artifact to dependencies dict for expression resolution
             dependencies[dep_id] = artifacts_by_node[dep_id]
-            # Also add to manifest directly (for ops that access by key)
-            manifest[dep_id] = artifacts_by_node[dep_id]
 
-        # Resolve ${...} CEL expressions in params
-        # This replaces expressions like ${root.width} with their evaluated values
-        resolved_params = resolve_params(node.params, dependencies)
+        # Manifest = resolved params only. No dependency injection.
+        # ref() and cel() markers in params are resolved using dependencies.
+        return resolve_params(node.params, dependencies)
 
-        # Update manifest with resolved params (overriding any raw expressions)
-        manifest.update(resolved_params)
+    def _invoke_op(self, op: Any, op_name: str, manifest: dict[str, Any]) -> ICacheable:
+        """Invoke an operation with kwargs dispatch and return validation.
 
-        return manifest
+        Args:
+            op: The callable operation to invoke.
+            op_name: The name of the operation (for error messages).
+            manifest: The manifest dictionary mapping parameter names to values.
+
+        Returns:
+            An ICacheable artifact (wrapped if necessary).
+
+        Raises:
+            ValueError: If required parameters are missing.
+            TypeError: If return value is not cacheable.
+        """
+        # Inspect function signature to map manifest keys to function parameters
+        sig = inspect.signature(op)
+        kwargs: dict[str, Any] = {}
+
+        # Map manifest keys to function parameters by name
+        for name, param in sig.parameters.items():
+            if name in manifest:
+                value = manifest[name]
+                # Basic unwrapping: if function expects native type but got ICacheable wrapper
+                # extract the .value attribute (best-effort, deferred from plan)
+                param_type = param.annotation
+                if param_type is not inspect.Parameter.empty and isinstance(
+                    param_type, type
+                ):
+                    # Try to unwrap ICacheable to native type if function expects native
+                    if param_type is int and isinstance(value, Integer):
+                        value = value.value
+                    elif param_type is str and isinstance(value, String):
+                        value = value.value
+                    # Add more unwrapping cases as needed
+                kwargs[name] = value
+            elif param.default is not inspect.Parameter.empty:
+                # Parameter has a default value, skip it
+                pass
+            elif param.kind == inspect.Parameter.VAR_KEYWORD:
+                # Function accepts **kwargs, will handle below
+                pass
+            else:
+                # Required parameter missing
+                raise ValueError(f"Op '{op_name}': missing required parameter '{name}'")
+
+        # If function has **kwargs, pass remaining manifest keys
+        has_var_kwargs = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        if has_var_kwargs:
+            for key, val in manifest.items():
+                if key not in kwargs:
+                    kwargs[key] = val
+
+        # Invoke the operation
+        result = op(**kwargs)
+
+        # Validate return value is cacheable
+        if not is_cacheable(result):
+            raise TypeError(
+                f"Op '{op_name}' returned {type(result).__name__}, "
+                f"which is not a cacheable type"
+            )
+
+        # Wrap native types to ICacheable for storage
+        return to_cacheable(result)
