@@ -3,10 +3,14 @@
 from collections import deque
 from typing import TYPE_CHECKING
 
-from invariant.node import Node
+from invariant.node import Node, SubGraphNode
 
 if TYPE_CHECKING:
     from invariant.registry import OpRegistry
+
+# Graph may contain regular nodes or subgraph nodes (internal DAGs).
+GraphVertex = Node | SubGraphNode
+Graph = dict[str, GraphVertex]
 
 
 class GraphResolver:
@@ -27,18 +31,16 @@ class GraphResolver:
         """
         self.registry = registry
 
-    def validate(
-        self, graph: dict[str, Node], context_keys: set[str] | None = None
-    ) -> None:
+    def validate(self, graph: Graph, context_keys: set[str] | None = None) -> None:
         """Validate a graph definition.
 
         Checks:
         - All node dependencies exist in the graph or in context
-        - All referenced ops are registered (if registry provided)
+        - All referenced ops are registered (if registry provided; Node only)
         - No cycles exist
 
         Args:
-            graph: Dictionary mapping node IDs to Node objects.
+            graph: Dictionary mapping node IDs to Node or SubGraphNode objects.
             context_keys: Optional set of external dependency keys (from context).
                          Dependencies not in the graph are allowed if they're in context.
 
@@ -57,25 +59,24 @@ class GraphResolver:
                         f"context={sorted(context_keys)}"
                     )
 
-        # Check all ops are registered (if registry provided)
+        # Check all ops are registered (if registry provided); only Node has op_name
         if self.registry:
             for node_id, node in graph.items():
-                if not self.registry.has(node.op_name):
-                    raise ValueError(
-                        f"Node '{node_id}' references unregistered op '{node.op_name}'"
-                    )
+                if isinstance(node, Node):
+                    if not self.registry.has(node.op_name):
+                        raise ValueError(
+                            f"Node '{node_id}' references unregistered op '{node.op_name}'"
+                        )
 
         # Check for cycles (excluding context dependencies)
         if self._has_cycle(graph, context_keys=context_keys):
             raise ValueError("Graph contains cycles")
 
-    def _has_cycle(
-        self, graph: dict[str, Node], context_keys: set[str] | None = None
-    ) -> bool:
+    def _has_cycle(self, graph: Graph, context_keys: set[str] | None = None) -> bool:
         """Detect cycles in the graph using DFS.
 
         Args:
-            graph: Dictionary mapping node IDs to Node objects.
+            graph: Dictionary mapping node IDs to GraphVertex (Node or SubGraphNode).
             context_keys: Optional set of external dependency keys (from context).
                          These are excluded from cycle detection.
 
@@ -122,12 +123,12 @@ class GraphResolver:
         return False
 
     def topological_sort(
-        self, graph: dict[str, Node], context_keys: set[str] | None = None
+        self, graph: Graph, context_keys: set[str] | None = None
     ) -> list[str]:
         """Topologically sort the graph using Kahn's algorithm.
 
         Args:
-            graph: Dictionary mapping node IDs to Node objects.
+            graph: Dictionary mapping node IDs to GraphVertex (Node or SubGraphNode).
             context_keys: Optional set of external dependency keys (from context).
                          These are excluded from topological sorting.
 
@@ -177,15 +178,13 @@ class GraphResolver:
 
         return result
 
-    def resolve(
-        self, graph: dict[str, Node], context_keys: set[str] | None = None
-    ) -> list[str]:
+    def resolve(self, graph: Graph, context_keys: set[str] | None = None) -> list[str]:
         """Validate and topologically sort a graph.
 
         Convenience method that validates then sorts.
 
         Args:
-            graph: Dictionary mapping node IDs to Node objects.
+            graph: Dictionary mapping node IDs to GraphVertex (Node or SubGraphNode).
             context_keys: Optional set of external dependency keys (from context).
 
         Returns:

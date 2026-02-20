@@ -21,6 +21,7 @@ This document is the normative reference for Invariant's execution model — the
    - [Type Unwrapping](#43-type-unwrapping)
    - [Return Value Validation and Wrapping](#44-return-value-validation-and-wrapping)
    - [Artifact Persistence](#45-artifact-persistence)
+   - [SubGraphNode Execution](#46-subgraphnode-execution)
 5. [External Dependencies (Context)](#5-external-dependencies-context)
 6. [Graph Resolver](#6-graph-resolver)
 7. [Artifact Store](#7-artifact-store)
@@ -231,6 +232,18 @@ After execution (or cache retrieval), the artifact is:
 
 1. Stored in the `ArtifactStore` under `(op_name, digest)` (if cache miss)
 2. Stored in `artifacts_by_node[node_id]` for downstream dependency resolution
+
+### 4.6 SubGraphNode Execution
+
+A graph may contain **SubGraphNode** vertices in addition to **Node** vertices. A `SubGraphNode` has no `op_name`; instead it carries an internal graph (`dict[str, Node]`) and an `output` key. When the executor encounters a SubGraphNode (in topological order), it:
+
+1. **Builds the manifest** from the SubGraphNode's params and deps (same as Phase 1 for a Node).
+2. **Executes the internal graph** by calling `self.execute(node.graph, context=manifest)` — the same Executor instance, same registry, same ArtifactStore. The resolved params are passed as context so internal nodes can reference them by dependency name.
+3. **Assigns** the internal `output` node's artifact to this vertex: `artifacts_by_node[node_id] = inner_results[node.output]`.
+
+There is **no SubGraphNode-level caching**; only the internal ops are cached by `(op_name, digest)`. The same store is used for the entire run, so identical work inside one or across multiple subgraphs is deduplicated.
+
+For the full SubGraphNode model, execution semantics, and shared caching, see [Subgraphs](./subgraphs.md).
 
 ---
 

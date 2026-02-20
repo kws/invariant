@@ -3,7 +3,7 @@
 import pytest
 
 from invariant.graph import GraphResolver
-from invariant.node import Node
+from invariant.node import Node, SubGraphNode
 
 
 class TestGraphResolver:
@@ -173,3 +173,34 @@ class TestGraphResolver:
         result = resolver.topological_sort(graph)
         assert set(result) == {"a", "b"}
         assert len(result) == 2
+
+    def test_validate_graph_with_subgraph_node(self, registry):
+        """Test that a graph containing a SubGraphNode validates and sorts."""
+        registry.register("op1", lambda: None)
+        registry.register("op2", lambda x: x)
+        inner = {
+            "a": Node(op_name="op1", params={}, deps=[]),
+            "b": Node(op_name="op2", params={"x": 1}, deps=["a"]),
+        }
+        sub = SubGraphNode(params={}, deps=["upstream"], graph=inner, output="b")
+        graph = {
+            "upstream": Node(op_name="op1", params={}, deps=[]),
+            "sub": sub,
+        }
+        resolver = GraphResolver(registry)
+        resolver.validate(graph)  # Should not raise
+        result = resolver.topological_sort(graph)
+        assert "upstream" in result
+        assert "sub" in result
+        assert result.index("upstream") < result.index("sub")
+
+    def test_subgraph_node_not_in_registry(self, registry):
+        """Test that SubGraphNode is not required to be in registry (no op_name)."""
+        registry.register("op1", lambda: None)
+        inner = {"a": Node(op_name="op1", params={}, deps=[])}
+        sub = SubGraphNode(params={}, deps=[], graph=inner, output="a")
+        graph = {"sub": sub}
+        resolver = GraphResolver(registry)
+        resolver.validate(graph)  # Should not raise; SubGraphNode has no op_name
+        result = resolver.resolve(graph)
+        assert result == ["sub"]

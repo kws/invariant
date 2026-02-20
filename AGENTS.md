@@ -132,6 +132,7 @@ Node params support three explicit mechanisms. For the complete normative refere
 |:--|:--|
 | [docs/expressions.md](./docs/expressions.md) | **Normative reference** for parameter markers (`ref`, `cel`, `${...}`) and the CEL expression language |
 | [docs/executor.md](./docs/executor.md) | **Normative reference** for the two-phase execution model, caching, type unwrapping, and artifact storage |
+| [docs/subgraphs.md](./docs/subgraphs.md) | SubGraphNode model, execution semantics, and reusable DAG fragments |
 | [architecture.md](./architecture.md) | Design philosophy, protocol specifications, and reference test pipeline |
 | [examples/README.md](./examples/README.md) | Runnable examples with walkthroughs, DAG diagrams, and run instructions |
 

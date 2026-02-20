@@ -5,11 +5,11 @@ from typing import TYPE_CHECKING, Any
 
 from invariant.cacheable import is_cacheable
 from invariant.expressions import resolve_params
-from invariant.graph import GraphResolver
+from invariant.graph import Graph, GraphResolver
 from invariant.hashing import hash_manifest
+from invariant.node import Node, SubGraphNode
 
 if TYPE_CHECKING:
-    from invariant.node import Node
     from invariant.registry import OpRegistry
     from invariant.store.base import ArtifactStore
 
@@ -40,12 +40,12 @@ class Executor:
         self.resolver = resolver or GraphResolver(registry)
 
     def execute(
-        self, graph: dict[str, "Node"], context: dict[str, Any] | None = None
+        self, graph: Graph, context: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Execute a graph and return artifacts for each node.
 
         Args:
-            graph: Dictionary mapping node IDs to Node objects.
+            graph: Dictionary mapping node IDs to Node or SubGraphNode objects.
             context: Optional dictionary of external dependencies (values not in graph).
                     These are injected as artifacts available to any node that declares
                     them in deps.
@@ -78,31 +78,35 @@ class Executor:
         for node_id in sorted_nodes:
             node = graph[node_id]
 
-            # Phase 1: Build manifest
-            manifest = self._build_manifest(node, node_id, graph, artifacts_by_node)
-            digest = hash_manifest(manifest)
-
-            # Phase 2: Execute or retrieve from cache
-            if self.store.exists(node.op_name, digest):
-                # Cache hit: retrieve from store
-                artifact = self.store.get(node.op_name, digest)
+            if isinstance(node, SubGraphNode):
+                # SubGraphNode: run internal graph with resolved params as context
+                manifest = self._build_manifest(node, node_id, graph, artifacts_by_node)
+                inner_results = self.execute(node.graph, context=manifest)
+                if node.output not in inner_results:
+                    raise ValueError(
+                        f"SubGraphNode '{node_id}' output '{node.output}' not in "
+                        f"internal results. Keys: {list(inner_results.keys())}."
+                    )
+                artifacts_by_node[node_id] = inner_results[node.output]
             else:
-                # Cache miss: execute operation
-                op = self.registry.get(node.op_name)
-                artifact = self._invoke_op(op, node.op_name, manifest)
-
-                # Persist to store
-                self.store.put(node.op_name, digest, artifact)
-
-            artifacts_by_node[node_id] = artifact
+                # Node: Phase 1 build manifest, Phase 2 cache lookup or execute op
+                manifest = self._build_manifest(node, node_id, graph, artifacts_by_node)
+                digest = hash_manifest(manifest)
+                if self.store.exists(node.op_name, digest):
+                    artifact = self.store.get(node.op_name, digest)
+                else:
+                    op = self.registry.get(node.op_name)
+                    artifact = self._invoke_op(op, node.op_name, manifest)
+                    self.store.put(node.op_name, digest, artifact)
+                artifacts_by_node[node_id] = artifact
 
         return artifacts_by_node
 
     def _build_manifest(
         self,
-        node: "Node",
+        node: Node | SubGraphNode,
         node_id: str,
-        graph: dict[str, "Node"],
+        graph: Graph,
         artifacts_by_node: dict[str, Any],
     ) -> dict[str, Any]:
         """Build the input manifest for a node (Phase 1).
