@@ -37,12 +37,21 @@ Invariant is a Python-based deterministic execution engine for DAGs (directed ac
 | **Manifest** | Fully resolved dictionary of params for a Node | Built from resolved params only (no dep injection) |
 | **Artifact** | Immutable output produced by an Op | Frozen once created, must be cacheable |
 | **Digest** | SHA-256 hash of a Manifest | Serves as cache key/identity |
-| **ref(dep)** | Param marker for artifact passthrough | Resolves to ICacheable object from dependency |
+| **ref(dep)** | Param marker for artifact passthrough | Resolves to artifact from dependency (native type or ICacheable domain type) |
 | **cel(expr)** | Param marker for CEL expression | Evaluates expression, returns computed value |
 
-## **ICacheable Protocol**
+## **Cacheable Type Universe**
 
-All data passed between Nodes **must** implement this protocol:
+All data passed between Nodes must be **cacheable** (validated by `is_cacheable()`):
+
+**Supported native types:**
+- `int`, `str`, `bool`, `None`
+- `Decimal` (safe numerics — no `float`!)
+- `dict[str, Cacheable]`, `list[Cacheable]`, `tuple[Cacheable, ...]`
+
+**ICacheable Protocol** (for domain types like `Polynomial`):
+
+Domain types that require custom serialization implement this protocol:
 
 ```python
 class ICacheable(Protocol):
@@ -60,16 +69,18 @@ class ICacheable(Protocol):
         ...
 ```
 
+Native types are stored directly without wrapping. The store codec handles serialization of all cacheable types uniformly.
+
 ## **Execution Model: Two Phases**
 
 For each node in topological order, the executor runs two phases. For the complete normative reference, see [docs/executor.md](./docs/executor.md).
 
 ### **Phase 1: Context Resolution (Graph → Manifest)**
 1. Traverse DAG, resolve param markers (`ref()`, `cel()`, `${...}`) for each Node
-2. `ref("dep")` → resolves to ICacheable artifact from dependency
+2. `ref("dep")` → resolves to artifact from dependency (native type or ICacheable domain type)
 3. `cel("expr")` → evaluates CEL expression against dependency artifacts
 4. `"${expr}"` → evaluates CEL expression and interpolates into string
-5. Recursively calculate `get_stable_hash()` for all resolved values
+5. Recursively calculate hash for all resolved values (using `hash_value()` for native types, `get_stable_hash()` for ICacheable)
 6. Assemble canonical dictionary (sorted keys) from resolved params only
 7. Output: **Manifest** (resolved params) → hash becomes **Digest** (cache key)
 
@@ -81,11 +92,10 @@ For each node in topological order, the executor runs two phases. For the comple
 2. **Execution:** If False:
    - Inspect op function signature using `inspect.signature()`
    - Map manifest keys to function parameters by name (`**kwargs` dispatch)
-   - Perform best-effort type unwrapping (e.g., `Integer` → `int`) when op expects native types
    - Invoke `OpRegistry.get(op_name)(**kwargs)`
    - Validate return value is cacheable using `is_cacheable()`
-   - Wrap native types to ICacheable using `to_cacheable()` if needed
-3. **Persistence:** Serialize and save Artifact to `ArtifactStore` under (op_name, Digest)
+   - Store value as-is (native types or ICacheable domain types)
+3. **Persistence:** Serialize and save Artifact to `ArtifactStore` under (op_name, Digest) using the store codec
 
 ## **System Components**
 

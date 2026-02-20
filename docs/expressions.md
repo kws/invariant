@@ -55,7 +55,7 @@ There are three marker types plus literal values:
 
 ### 2.1 `ref()` — Artifact Passthrough
 
-`ref(dep_name)` resolves to the **entire ICacheable artifact** produced by the named dependency. The artifact is passed through to the op's manifest without transformation.
+`ref(dep_name)` resolves to the **entire artifact** produced by the named dependency (native type or ICacheable domain type). The artifact is passed through to the op's manifest without transformation.
 
 **Import:** `from invariant import ref`
 
@@ -66,7 +66,7 @@ ref("dependency_name")
 ```
 
 **Behavior:**
-- Resolves to the ICacheable object stored in `artifacts_by_node[dep_name]`
+- Resolves to the artifact stored in `artifacts_by_node[dep_name]` (native type like `int`, `str`, `Decimal`, or ICacheable domain type like `Polynomial`)
 - The referenced dependency **must** be declared in the node's `deps` list
 - Validated at Node creation time — a `ref()` referencing an undeclared dependency raises `ValueError` immediately
 
@@ -130,11 +130,11 @@ cel("expression")
 
 ```python
 Node(
-    op_name="stdlib:from_integer",
-    params={"value": cel("root_width.value")},
+    op_name="stdlib:identity",
+    params={"value": cel("root_width")},
     deps=["root_width"],
 )
-# If root_width is Integer(144), manifest resolves to: {"value": 144}
+# If root_width is 144 (native int), manifest resolves to: {"value": 144}
 ```
 
 **Example — decimal arithmetic:**
@@ -153,8 +153,8 @@ Node(
 Node(
     op_name="stdlib:add",
     params={
-        "a": cel("min(x.value, y.value)"),
-        "b": cel("max(x.value, y.value)"),
+        "a": cel("min(x, y)"),
+        "b": cel("max(x, y)"),
     },
     deps=["x", "y"],
 )
@@ -181,24 +181,24 @@ Strings containing `${expression}` delimiters evaluate the embedded CEL expressi
 **Example — whole-string expression (returns native type):**
 
 ```python
-params = {"width": "${background.width}"}
-deps = {"background": Integer(100)}
+params = {"width": "${background}"}
+deps = {"background": 100}
 # Resolves to: {"width": 100}  (int, not str)
 ```
 
 **Example — mixed text and expressions (returns string):**
 
 ```python
-params = {"message": "Width is ${background.width}px"}
-deps = {"background": Integer(100)}
+params = {"message": "Width is ${background}px"}
+deps = {"background": 100}
 # Resolves to: {"message": "Width is 100px"}  (str)
 ```
 
 **Example — multiple expressions in one string:**
 
 ```python
-params = {"label": "${x.value} + ${y.value} = ${x.value + y.value}"}
-deps = {"x": Integer(3), "y": Integer(7)}
+params = {"label": "${x} + ${y} = ${x + y}"}
+deps = {"x": 3, "y": 7}
 # Resolves to: {"label": "3 + 7 = 10"}
 ```
 
@@ -253,26 +253,33 @@ See [Artifact → CEL Binding](#41-artifact--cel-binding) for the full conversio
 
 ### 3.2 Field Access
 
-Artifact fields are accessed using dot notation:
+**Native types** (int, str, Decimal, dict, list) are exposed directly to CEL:
 
 ```python
-cel("background.width")     # Access the 'width' attribute
-cel("background.value")     # Access the 'value' attribute
-cel("x.value + y.value")    # Access .value on two artifacts
+cel("x")              # If x is int 42, returns 42
+cel("x + y")          # If x=3, y=7, returns 10
+cel("name")           # If name is str "hello", returns "hello"
 ```
 
-**Bare variable references** (e.g., `${x}` or `cel("x")`) resolve to the artifact's `.value` field if one exists. This is a convenience — `${x}` and `${x.value}` are equivalent for artifacts with a `.value` attribute.
+**ICacheable domain types** (like Polynomial) are exposed as MapType for field access:
+
+```python
+cel("poly.coefficients")  # Access the 'coefficients' attribute
+cel("poly.coefficients[0]")  # Access first coefficient
+```
+
+**Bare variable references** (e.g., `${x}` or `cel("x")`) resolve directly to the artifact value. For native types, this is the value itself. For ICacheable domain types, this extracts the `.value` field if present, otherwise returns the map.
 
 ### 3.3 Integer Arithmetic
 
 Standard integer arithmetic is supported:
 
 ```python
-cel("x.value + 1")          # Addition with literal
-cel("x.value + y.value")    # Addition of two artifact values
-cel("x.value * 2")          # Multiplication
-cel("x.value - y.value")    # Subtraction
-cel("1 + 2")                # Pure literal arithmetic (no dependencies needed)
+cel("x + 1")          # Addition with literal
+cel("x + y")          # Addition of two artifact values
+cel("x * 2")          # Multiplication
+cel("x - y")          # Subtraction
+cel("1 + 2")          # Pure literal arithmetic (no dependencies needed)
 ```
 
 All integer operations return `int` values.
@@ -284,7 +291,7 @@ Per the **Strict Numeric Policy**, native `float` types are forbidden in cacheab
 ```python
 cel('decimal("3.14")')                         # Decimal from string
 cel('decimal("1.5") + decimal("2.5")')         # Decimal addition → Decimal("4.0")
-cel('decimal(x.value)')                        # Integer to Decimal
+cel('decimal(x)')                        # Integer to Decimal
 cel('decimal("3.14") * 2')                     # Mixed Decimal/int multiplication
 cel('decimal(background.width) * decimal("0.75")')  # Scale a dimension by 75%
 ```
@@ -292,7 +299,7 @@ cel('decimal(background.width) * decimal("0.75")')  # Scale a dimension by 75%
 **Rules:**
 - Fractional literals **must** use `decimal("...")` with a **string** argument
 - An expression whose final result is a `float` (CEL `double`) is **rejected** with a `ValueError`
-- `decimal()` accepts: `int`, `str`, `Decimal`, `IntType`, `StringType`, or `MapType` with a `.value` field
+- `decimal()` accepts: `int`, `str`, `Decimal`, `IntType`, `StringType`, or `MapType` (extracts `.value` if present)
 
 ### 3.5 Built-in Functions
 
@@ -306,19 +313,15 @@ Three custom functions are registered in addition to standard CEL:
 
 **`min()` and `max()` with artifacts:**
 
-When called with artifact references (MapType), `min()` and `max()` extract the `.value` field for comparison but return the **original artifact**:
+When called with native types, `min()` and `max()` return the value directly:
 
 ```python
-cel("min(x, y)")    # Compares x.value vs y.value, returns the smaller artifact
-cel("max(x, y)")    # Compares x.value vs y.value, returns the larger artifact
+cel("min(x, y)")    # If x=3, y=7, returns 3
+cel("max(x, y)")    # If x=3, y=7, returns 7
+cel("min(x, 10)")   # Returns the smaller of x or 10
 ```
 
-When called with scalar values, they return the scalar directly:
-
-```python
-cel("min(x.value, y.value)")    # Returns the smaller int value
-cel("max(x.value, 10)")         # Returns the larger of x.value or 10
-```
+When called with ICacheable domain types (MapType), `min()` and `max()` extract the `.value` field for comparison if present.
 
 **Canonicalization pattern:** Use `min()`/`max()` to canonicalize operand order for commutative operations, ensuring cache hits regardless of argument ordering:
 
@@ -357,13 +360,21 @@ When an ICacheable artifact is bound as a CEL variable, it is converted to a `Ma
 | `Decimal` | `Decimal` (passed through as-is) |
 | Other | `StringType(str(value))` |
 
-**The `.value` attribute** (if present) is always included. All other **public, non-callable attributes** (not starting with `_`) are also exposed.
+**Native types** (int, str, Decimal, dict, list) are exposed directly:
 
-**Example:** An `Integer(42)` artifact is bound as:
+```
+IntType(42)          # For int 42
+StringType("hello")  # For str "hello"
+Decimal("3.14")      # For Decimal("3.14")
+```
+
+**ICacheable domain types** (like Polynomial) are exposed as MapType. The `.value` attribute (if present) is always included. All other **public, non-callable attributes** (not starting with `_`) are also exposed.
+
+**Example:** A `Polynomial((1, 2, 3))` artifact is bound as:
 
 ```
 MapType({
-    "value": IntType(42)
+    "coefficients": ListType([IntType(1), IntType(2), IntType(3)])
 })
 ```
 
@@ -391,7 +402,7 @@ All three marker types can be nested inside `dict` and `list` structures. The re
 ```python
 params = {
     "config": {
-        "width": cel("bg.value"),
+        "width": cel("bg"),
         "color": "#000",
         "source": ref("icon_blob"),
     }
@@ -415,7 +426,7 @@ params = {
 
 ```python
 params = {
-    "values": ["${x.value}", "${y.value}"],
+    "values": ["${x}", "${y}"],
     "config": {"poly": ref("p"), "count": 5},
 }
 ```
@@ -463,19 +474,18 @@ The following is **not** available and will produce an error:
 
 ```python
 from invariant import Node, cel, ref
-from invariant.types import Integer
 
-# Access a dependency's value attribute
+# Access a dependency's value (native type exposed directly)
 Node(
-    op_name="stdlib:from_integer",
-    params={"value": cel("source.value")},
+    op_name="stdlib:identity",
+    params={"value": cel("source")},
     deps=["source"],
 )
 
 # Equivalent using ${...} (whole-string expression returns native type)
 Node(
-    op_name="stdlib:from_integer",
-    params={"value": "${source.value}"},
+    op_name="stdlib:identity",
+    params={"value": "${source}"},
     deps=["source"],
 )
 ```
@@ -502,8 +512,8 @@ Node(
 Node(
     op_name="stdlib:add",
     params={
-        "a": cel("min(x.value, y.value)"),
-        "b": cel("max(x.value, y.value)"),
+        "a": cel("min(x, y)"),
+        "b": cel("max(x, y)"),
     },
     deps=["x", "y"],
 )
@@ -515,7 +525,7 @@ Node(
 # Build a descriptive message from artifact values
 Node(
     op_name="log:info",
-    params={"message": "Processing ${count.value} items at ${name.value}"},
+    params={"message": "Processing ${count} items at ${name}"},
     deps=["count", "name"],
 )
 ```
@@ -629,7 +639,7 @@ results = executor.execute(graph, context={"root": root})
 
 **Documentation** does not explicitly state that `"${expr}"` returns the native type when the expression covers the entire string.
 
-**Implementation:** When the `${...}` expression is the entire string content (after trimming), `_evaluate_expression()` returns the native CEL result (int, Decimal, etc.) rather than converting to string. For example, `"${x.value}"` where x is `Integer(100)` returns `100` (int), not `"100"` (string).
+**Implementation:** When the `${...}` expression is the entire string content (after trimming), `_evaluate_expression()` returns the native CEL result (int, Decimal, etc.) rather than converting to string. For example, `"${x}"` where x is `100` (native int) returns `100` (int), not `"100"` (string).
 
 **Impact:** This is correct and desirable behavior, but should be explicitly documented. The current behavior means `"${expr}"` and `cel("expr")` are functionally equivalent when the expression covers the entire string.
 

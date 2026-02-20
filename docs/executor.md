@@ -209,33 +209,14 @@ def add(a: int, b: int) -> int:
 # Invokes: add(a=3, b=7) → 10
 ```
 
-### 4.3 Type Unwrapping
-
-Before passing manifest values to op parameters, the executor performs **best-effort type unwrapping** when the op expects native types but receives ICacheable wrappers:
-
-| Op expects | Manifest has | Action |
-|:--|:--|:--|
-| `int` | `Integer(42)` | Unwrap to `42` |
-| `str` | `String("hello")` | Unwrap to `"hello"` |
-| Other type annotations | ICacheable | Passed as-is (no unwrapping) |
-| No annotation | Any | Passed as-is |
-
-**Important:** This unwrapping is best-effort based on type annotations. If the op declares `a: int` and receives `Integer(42)`, the executor extracts `.value`. If the op declares `a: Polynomial` and receives a `Polynomial`, no unwrapping occurs — the artifact is passed directly.
-
-> **Note:** Only `Integer → int` and `String → str` unwrapping is currently implemented. See [Implementation Flag F-07](#f-07-limited-type-unwrapping).
-
-### 4.4 Return Value Validation and Wrapping
+### 4.3 Return Value Validation
 
 After the op returns, the executor:
 
 1. **Validates** the return value is cacheable using `is_cacheable(result)`. If not, raises `TypeError`.
-2. **Wraps** native types to ICacheable using `to_cacheable(result)`:
-   - `int` → `Integer(value)`
-   - `str` → `String(value)`
-   - `Decimal` → `DecimalValue(value)`
-   - `ICacheable` → passed through unchanged
+2. **Stores** the value as-is (native types or ICacheable domain types). No wrapping is performed.
 
-This means ops can return native Python types (`int`, `str`, `Decimal`) and they will be automatically wrapped for storage.
+This means ops can return native Python types (`int`, `str`, `Decimal`, `dict`, `list`) or ICacheable domain types (like `Polynomial`), and they are stored directly.
 
 **Example:**
 
@@ -243,10 +224,10 @@ This means ops can return native Python types (`int`, `str`, `Decimal`) and they
 def add(a: int, b: int) -> int:
     return a + b  # Returns native int
 
-# Executor wraps: to_cacheable(8) → Integer(8)
+# Executor stores: 8 (native int) directly
 ```
 
-### 4.5 Artifact Persistence
+### 4.4 Artifact Persistence
 
 After execution (or cache retrieval), the artifact is:
 
@@ -263,7 +244,7 @@ The `executor.execute(graph, context={...})` method accepts an optional `context
 **How context works:**
 
 1. Before the topological sort loop, context values are injected into `artifacts_by_node`
-2. Context values must be cacheable (`is_cacheable()` check) and are wrapped to ICacheable via `to_cacheable()`
+2. Context values must be cacheable (`is_cacheable()` check) and are stored as-is (no wrapping)
 3. Any node can declare a context key in its `deps` and reference it via `ref()`, `cel()`, or `${...}` — identically to graph-internal dependencies
 4. From a node's perspective, there is no difference between an internal artifact and a context value
 
@@ -276,20 +257,18 @@ The `executor.execute(graph, context={...})` method accepts an optional `context
 **Example:**
 
 ```python
-context = {"root_width": Integer(144)}
+context = {"root_width": 144}
 
 graph = {
     "bg": Node(
-        op_name="stdlib:from_integer",
-        params={"value": cel("root_width.value")},
+        op_name="stdlib:identity",
+        params={"value": cel("root_width")},
         deps=["root_width"],  # References context, not a graph node
     ),
 }
 
 results = executor.execute(graph, context=context)
 ```
-
-> **Warning:** See [Implementation Flag F-02 (in expressions.md)](./expressions.md#f-02-context-values-as-plain-dicts) — the architecture.md example shows plain dicts as context values, but the implementation requires ICacheable-compatible values.
 
 ---
 
