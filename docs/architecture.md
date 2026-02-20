@@ -83,15 +83,21 @@ The execution flow is split into two distinct phases to maximize cache hits.
 
 ### **Phase 1: Context Resolution (Graph \-\> Manifest)**
 
-The engine traverses the user-defined DAG. For each Node, it resolves inputs to create an **Input Manifest**.
+The engine traverses the user-defined DAG. For each Node, it resolves param markers (`ref()`, `cel()`, `${...}`) to create an **Input Manifest**.
 
 * **Inputs:**  
-  1. Static Parameters (from Node definition).  
-  2. Upstream Artifacts (results from deps).  
+  1. Node Parameters (may contain `ref()`, `cel()`, or `${...}` markers).  
+  2. Upstream Artifacts (results from deps, available for marker resolution).  
 * **Process:**  
-  * The engine recursively calculates the get\_stable\_hash() for every item.  
-  * It assembles a canonical dictionary (sorted keys) of these inputs.  
-* **Output:** The **Manifest**. The hash of this Manifest becomes the **Digest** (Cache Key).
+  * The engine resolves all param markers using dependency artifacts.  
+  * `ref("dep")` → resolves to the ICacheable artifact.  
+  * `cel("expr")` → evaluates CEL expression and returns computed value.  
+  * `"${expr}"` → evaluates CEL expression and interpolates into string.  
+  * The engine recursively calculates the get\_stable\_hash() for every resolved value.  
+  * It assembles a canonical dictionary (sorted keys) of the resolved params.  
+* **Output:** The **Manifest** (resolved params only). The hash of this Manifest becomes the **Digest** (Cache Key).
+
+**Key Design:** Dependencies are NOT injected into the manifest directly. They are only used to resolve param markers. The manifest is built entirely from resolved params, making the data flow explicit.
 
 ### **Phase 2: Action Execution (Manifest \-\> Artifact)**
 
@@ -99,7 +105,9 @@ The engine traverses the user-defined DAG. For each Node, it resolves inputs to 
   * Engine checks ArtifactStore.exists(Op, Digest).  <- this is essential, artifact is the output of an operation for a particular input manifest. Antother operation could in theory get the same input manifest and would return a different result.
   * *If True:* Returns the stored Artifact. **Op is strictly skipped.**  
 * **Step 2: Execution**  
-  * *If False:* Engine invokes OpRegistry.get(op\_name)(manifest).  
+  * *If False:* Engine inspects the op function signature and maps manifest keys to function parameters by name (`**kwargs` dispatch).  
+  * Engine performs best-effort type unwrapping (e.g., `Integer` → `int`) when the op expects native types.  
+  * Engine invokes the op with resolved arguments and validates the return value is cacheable.  
 * **Step 3: Persistence**  
   * The resulting Artifact is serialized and saved to ArtifactStore under Operation and Digest.
 
@@ -149,7 +157,9 @@ sure to clarify before changing any of the details below.
 
 * justmyresource:get, gfx:render_solid - these are operations. They are prefixed to avoid naming collisions, but ultimately that doesn't matter. They must be assigned to the operation register prior to the execution of the pipeline
 
-* "${root.width}", "${decimal(background.width) * decimal('0.75')}" - these are expressions that are evaluated against the declared dependencies of the node. Not declaring something referenced in these expressions will raise an error. 
+* `ref("dep")` - references an upstream dependency artifact directly, passing the ICacheable object to the op
+* `cel("expr")` - evaluates a CEL expression against dependency artifacts, returning a computed value
+* `"${expr}"` - string interpolation with CEL expressions (for building strings, not extracting values) 
 
 One could have a Node that simply evaluated an expression and returns the value - that is effectively what all of these nodes do:
 
@@ -178,8 +188,8 @@ graph = {
     "background": Node(
         op_name="gfx:render_solid",
         params={
-            "width": "${root.width}",
-            "height": "${root.height}",
+            "width": cel("root.width"),
+            "height": cel("root.height"),
             "color": "#000000",
         },
         deps=["root"],
@@ -190,9 +200,9 @@ graph = {
         op_name="gfx:render_svg",
         params={
             # Here we see complex expressions using dependencies
-            "width": "${decimal(background.width) * decimal('0.75')}",
-            "height": "${decimal(background.height) * decimal('0.75')}",
-            "svg": "${icon_blob.data}"
+            "width": cel("decimal(background.width) * decimal('0.75')"),
+            "height": cel("decimal(background.height) * decimal('0.75')"),
+            "svg": cel("icon_blob.data")
         },
         deps=["background", "icon_blob"],
     ),
@@ -204,10 +214,10 @@ graph = {
             "layers": [
                 {
                     "id": "bg",
-                    "image": "${background.image}",
+                    "image": ref("background"),
                 },
                 {
-                    "image": "${icon.image}",
+                    "image": ref("icon"),
                     # Don't worry too much about this for now
                     # The important thing here is that this is
                     # internally evaluated in the gfx:composite
@@ -244,13 +254,50 @@ No special node type is needed to distinguish external inputs from graph-interna
 * Any dependency that **is not** a key in the graph is an **external** dependency, and **must** be provided in `context`.
 * If a dependency is neither in the graph nor in `context`, execution fails with an error.
 
-The `Executor` injects context values into the resolved artifacts before the topological sort loop begins, making them available to any node that declares them as a dependency. From the node's perspective, there is no difference between consuming an internal artifact and consuming an external context value — both are accessed the same way via `${...}` expressions.
+The `Executor` injects context values into the resolved artifacts before the topological sort loop begins, making them available to any node that declares them as a dependency. From the node's perspective, there is no difference between consuming an internal artifact and consuming an external context value — both are accessed the same way via `ref()`, `cel()`, or `${...}` expressions.
 
-### **7.2 Expression Language (CEL)**
+### **7.2 Parameter Markers and Expression Language**
 
-Invariant uses [CEL (Common Expression Language)](https://github.com/google/cel-spec) to evaluate `${...}` expressions in node parameters. CEL is a non-Turing-complete, side-effect-free expression language developed by Google, used in production systems including Kubernetes and Cloud IAM.
+Invariant provides three explicit mechanisms for parameter values, each with a clear purpose:
 
-#### **Why CEL**
+| Marker | Purpose | Resolves to |
+|:--|:--|:--|
+| `ref("dep")` | Artifact passthrough | The ICacheable object from dependency |
+| `cel("expr")` | CEL expression evaluation | Computed value (int, str, Decimal, etc.) |
+| `"text ${expr} text"` | String interpolation | Interpolated string |
+| literal (`5`, `"#000"`) | Static value | Itself |
+
+**Key Design Principle:** The manifest is built entirely from resolved params. Dependencies are NOT injected into the manifest directly — they are only available for `ref()`/`cel()` resolution within params. This makes the data flow explicit and eliminates ambiguity.
+
+#### **ref() - Artifact Passthrough**
+
+Use `ref()` when you want to pass the entire artifact object to an op:
+
+```python
+"p_plus_q": Node(
+    op_name="poly:add",
+    params={"a": ref("p"), "b": ref("q")},
+    deps=["p", "q"],
+)
+```
+
+The `ref()` marker validates at Node creation time that the referenced dependency is declared in `deps`, catching typos early.
+
+#### **cel() - CEL Expression Evaluation**
+
+Use `cel()` when you need to compute a derived value from dependency attributes:
+
+```python
+"icon": Node(
+    op_name="gfx:render_svg",
+    params={"width": cel("decimal(background.width) * decimal('0.75')")},
+    deps=["background"],
+)
+```
+
+Invariant uses [CEL (Common Expression Language)](https://github.com/google/cel-spec) for expression evaluation. CEL is a non-Turing-complete, side-effect-free expression language developed by Google, used in production systems including Kubernetes and Cloud IAM.
+
+**Why CEL:**
 
 CEL enforces the same guarantees Invariant requires:
 
@@ -260,17 +307,17 @@ CEL enforces the same guarantees Invariant requires:
 
 These properties are intrinsic to the language, not constraints we impose on top of a general-purpose evaluator.
 
-#### **Expression Syntax**
+#### **String Interpolation with `${...}`**
 
-Expressions appear inside `${...}` delimiters within node parameter values. The content between the delimiters is a CEL expression. A parameter value without `${...}` is treated as a plain literal — no evaluation occurs.
+Use `${...}` for string interpolation when building text values:
 
-* `"${root.width}"` — evaluated as CEL, resolves field `width` from the `root` dependency.
+* `"Width is ${background.width}px"` — interpolates the value into a string.
 * `"#000000"` — plain string literal, passed through unchanged.
 * `"align('bg', 'cc')"` — also a plain string literal (no `${}`), interpreted by the Op itself, not by the expression engine.
 
 #### **Execution Scope**
 
-When a `${...}` expression is evaluated, the following is available:
+When a `cel()` expression or `${...}` interpolation is evaluated, the following is available:
 
 | Available | Description |
 | :---- | :---- |
@@ -288,7 +335,7 @@ The following is **not** available and will produce an error:
 
 #### **Evaluation Timing**
 
-Expressions are evaluated during **Phase 1 (Context Resolution)**, when the Executor builds the Manifest for each node. The resolved value replaces the `${...}` in the parameter, and the complete Manifest is then hashed to produce the Digest. The expression itself is never cached — only its resolved result matters for cache identity.
+All param markers (`ref()`, `cel()`, `${...}`) are resolved during **Phase 1 (Context Resolution)**, when the Executor builds the Manifest for each node. The manifest is built entirely from resolved params — no dependency injection occurs. The resolved values are then hashed to produce the Digest. The expressions themselves are never cached — only their resolved results matter for cache identity.
 
 ## **8\. Reference Test Pipeline**
 
@@ -318,7 +365,7 @@ A `Polynomial` type implements `ICacheable` and wraps a `tuple[int, ...]` of coe
 
 ### **8.3 Polynomial Operations**
 
-The following operations are implemented as pure functions taking a manifest and returning an `ICacheable`:
+The following operations are implemented as plain Python functions with typed parameters:
 
 | Op Name | Inputs | Output | Notes |
 |:--|:--|:--|:--|
@@ -329,7 +376,7 @@ The following operations are implemented as pure functions taking a manifest and
 | `poly:derivative` | `poly: Polynomial` | `Polynomial` | `c[i] * i` shifted down one degree |
 | `poly:evaluate` | `poly: Polynomial, x: Integer` | `Integer` | Horner's method, pure integer result |
 
-All ops follow the existing stdlib pattern in [`src/invariant/ops/stdlib.py`](src/invariant/ops/stdlib.py), taking `manifest: dict[str, Any]` and returning `ICacheable`.
+All ops are plain Python functions with standard type annotations. The Executor inspects function signatures and maps resolved params to function arguments by name, performing best-effort type unwrapping (e.g., `Integer` → `int`) when needed.
 
 ### **8.4 Reference DAG: Distributive-Law Verification**
 
@@ -378,10 +425,9 @@ flowchart TD
 ### **8.5 Complete Example**
 
 ```python
-from invariant import Node, Executor, OpRegistry
+from invariant import Node, Executor, OpRegistry, ref
 from invariant.ops import poly
 from invariant.store.memory import MemoryStore
-from invariant.types import Integer
 
 # Register polynomial operations
 registry = OpRegistry()
@@ -409,58 +455,58 @@ graph = {
     # Left branch: (p + q) * r
     "p_plus_q": Node(
         op_name="poly:add",
-        params={},
+        params={"a": ref("p"), "b": ref("q")},
         deps=["p", "q"],
     ),
     "lhs": Node(
         op_name="poly:multiply",
-        params={},
+        params={"a": ref("p_plus_q"), "b": ref("r")},
         deps=["p_plus_q", "r"],
     ),
 
     # Right branch: p*r + q*r
     "pr": Node(
         op_name="poly:multiply",
-        params={},
+        params={"a": ref("p"), "b": ref("r")},
         deps=["p", "r"],
     ),
     "qr": Node(
         op_name="poly:multiply",
-        params={},
+        params={"a": ref("q"), "b": ref("r")},
         deps=["q", "r"],
     ),
     "rhs": Node(
         op_name="poly:add",
-        params={},
+        params={"a": ref("pr"), "b": ref("qr")},
         deps=["pr", "qr"],
     ),
 
     # Evaluate both sides at x=5
     "eval_lhs": Node(
         op_name="poly:evaluate",
-        params={"x": Integer(5)},
+        params={"poly": ref("lhs"), "x": 5},
         deps=["lhs"],
     ),
     "eval_rhs": Node(
         op_name="poly:evaluate",
-        params={"x": Integer(5)},
+        params={"poly": ref("rhs"), "x": 5},
         deps=["rhs"],
     ),
 
     # Bonus: derivative chain
     "d1": Node(
         op_name="poly:derivative",
-        params={},
+        params={"poly": ref("lhs")},
         deps=["lhs"],
     ),
     "d2": Node(
         op_name="poly:derivative",
-        params={},
+        params={"poly": ref("d1")},
         deps=["d1"],
     ),
     "eval_d2": Node(
         op_name="poly:evaluate",
-        params={"x": Integer(5)},
+        params={"poly": ref("d2"), "x": 5},
         deps=["d2"],
     ),
 }
@@ -501,9 +547,11 @@ For commutative operations like addition or multiplication, the order of operand
 
 The engine correctly treats these as distinct computations because it has no knowledge of commutativity. The manifest is an ordered dictionary, so different parameter orderings produce different digests, even when the mathematical result is identical.
 
-**Solution:** Use `min()` and `max()` in the `${...}` expressions to canonicalize operand order:
+**Solution:** Use `min()` and `max()` in `cel()` expressions to canonicalize operand order:
 
 ```python
+from invariant import Node, OpRegistry, cel
+
 graph = {
     "x": Node(
         op_name="stdlib:from_integer",
@@ -519,14 +567,14 @@ graph = {
     # First node: explicitly uses x, y order
     "sum_xy": Node(
         op_name="stdlib:add",
-        params={"a": "${min(x, y)}", "b": "${max(x, y)}"},
+        params={"a": cel("min(x.value, y.value)"), "b": cel("max(x.value, y.value)")},
         deps=["x", "y"],
     ),
 
     # Second node: uses y, x order in expressions — same result!
     "sum_yx": Node(
         op_name="stdlib:add",
-        params={"a": "${min(y, x)}", "b": "${max(y, x)}"},
+        params={"a": cel("min(y.value, x.value)"), "b": cel("max(y.value, x.value)")},
         deps=["x", "y"],
     ),
 }
@@ -535,7 +583,7 @@ graph = {
 # Same digest -> single execution, cache hit for the second node
 ```
 
-Both nodes resolve to the same manifest `{a: 3, b: 7}` because `min(x, y)` and `min(y, x)` both evaluate to `3`, and `max(x, y)` and `max(y, x)` both evaluate to `7`. The canonical ordering ensures cache hits regardless of how the dependencies are declared or referenced in expressions.
+Both nodes resolve to the same manifest `{a: 3, b: 7}` because `min(x.value, y.value)` and `min(y.value, x.value)` both evaluate to `3`, and `max(x.value, y.value)` and `max(y.value, x.value)` both evaluate to `7`. The canonical ordering ensures cache hits regardless of how the dependencies are declared or referenced in expressions.
 
 **Note:** `min()` and `max()` are custom CEL functions registered alongside `decimal()`, available in the expression evaluation scope. They work with any comparable types (integers, decimals, strings) and ensure deterministic canonicalization for commutative operations.
 

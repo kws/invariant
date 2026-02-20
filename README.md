@@ -24,26 +24,35 @@ poetry install
 ## Quick Start
 
 ```python
-from invariant import Executor, Node, OpRegistry
+from invariant import Executor, Node, OpRegistry, cel, ref
 from invariant.ops import stdlib
 from invariant.store.memory import MemoryStore
-from invariant.types import Integer, String
 
 # Create registry and register operations
 registry = OpRegistry()
 registry.register_package("stdlib", stdlib)
 
-# Create a simple graph: a -> b
+# Create a simple graph: x -> y -> sum
 graph = {
-    "a": Node(
-        op_name="stdlib:identity",
-        params={"value": String("hello")},
+    "x": Node(
+        op_name="stdlib:from_integer",
+        params={"value": 5},
         deps=[]
     ),
-    "b": Node(
+    "y": Node(
+        op_name="stdlib:from_integer",
+        params={"value": 3},
+        deps=[]
+    ),
+    "sum": Node(
         op_name="stdlib:add",
-        params={"a": Integer(1), "b": Integer(2)},
-        deps=["a"]
+        params={"a": ref("x"), "b": ref("y")},  # ref() passes artifacts directly
+        deps=["x", "y"]
+    ),
+    "doubled": Node(
+        op_name="stdlib:multiply",
+        params={"a": cel("sum.value"), "b": 2},  # cel() evaluates expression
+        deps=["sum"]
     ),
 }
 
@@ -52,8 +61,8 @@ store = MemoryStore()
 executor = Executor(registry=registry, store=store)
 results = executor.execute(graph)
 
-print(results["a"].value)  # "hello"
-print(results["b"].value)  # 3
+print(results["sum"].value)    # 8
+print(results["doubled"].value)  # 16
 ```
 
 ## Architecture
