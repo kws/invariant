@@ -1,7 +1,17 @@
 """Base class for ArtifactStore implementations."""
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any
+
+
+@dataclass
+class CacheStats:
+    """Cache statistics tracking hits, misses, and puts."""
+
+    hits: int = 0  # exists() returned True
+    misses: int = 0  # exists() returned False
+    puts: int = 0  # put() was called
 
 
 class ArtifactStore(ABC):
@@ -11,6 +21,14 @@ class ArtifactStore(ABC):
     by operation name and digest (SHA-256 hash). The composite key ensures
     that different operations with the same input manifest cache separately.
     """
+
+    def __init__(self) -> None:
+        """Initialize the store with cache statistics."""
+        self.stats = CacheStats()
+
+    def reset_stats(self) -> None:
+        """Reset cache statistics to zero."""
+        self.stats = CacheStats()
 
     @abstractmethod
     def exists(self, op_name: str, digest: str) -> bool:

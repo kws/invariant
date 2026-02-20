@@ -29,6 +29,7 @@ class ChainStore(ArtifactStore):
             l1: MemoryStore instance for L1 cache. If None, creates a new one.
             l2: DiskStore instance for L2 cache. If None, creates a new one.
         """
+        super().__init__()
         self.l1 = l1 or MemoryStore()
         self.l2 = l2 or DiskStore()
 
@@ -44,9 +45,14 @@ class ChainStore(ArtifactStore):
         """
         # Check L1 first (fast path)
         if self.l1.exists(op_name, digest):
+            self.stats.hits += 1
             return True
         # Check L2 (slower, but persistent)
-        return self.l2.exists(op_name, digest)
+        if self.l2.exists(op_name, digest):
+            self.stats.hits += 1
+            return True
+        self.stats.misses += 1
+        return False
 
     def get(self, op_name: str, digest: str) -> Any:
         """Retrieve an artifact from L1 or L2.
@@ -91,3 +97,4 @@ class ChainStore(ArtifactStore):
         # Write to both stores
         self.l1.put(op_name, digest, artifact)
         self.l2.put(op_name, digest, artifact)
+        self.stats.puts += 1

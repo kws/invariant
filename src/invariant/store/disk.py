@@ -30,6 +30,7 @@ class DiskStore(ArtifactStore):
 
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        super().__init__()
 
     def _get_path(self, op_name: str, digest: str) -> Path:
         """Get filesystem path for an operation and digest.
@@ -55,7 +56,12 @@ class DiskStore(ArtifactStore):
     def exists(self, op_name: str, digest: str) -> bool:
         """Check if an artifact exists."""
         path = self._get_path(op_name, digest)
-        return path.exists()
+        exists = path.exists()
+        if exists:
+            self.stats.hits += 1
+        else:
+            self.stats.misses += 1
+        return exists
 
     def get(self, op_name: str, digest: str) -> Any:
         """Retrieve an artifact by operation name and digest.
@@ -99,3 +105,4 @@ class DiskStore(ArtifactStore):
         with open(temp_path, "wb") as f:
             f.write(serialized_data)
         temp_path.replace(path)
+        self.stats.puts += 1
