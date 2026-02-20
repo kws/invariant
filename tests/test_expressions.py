@@ -4,8 +4,9 @@ from decimal import Decimal
 
 import pytest
 
+from invariant import cel, ref
 from invariant.expressions import resolve_params
-from invariant.types import Integer, String
+from invariant.types import Integer, Polynomial, String
 
 
 class TestVariableReferences:
@@ -273,3 +274,113 @@ class TestComplexExpressions:
         deps = {"count": Integer(42), "name": String("test")}
         result = resolve_params(params, deps)
         assert result["message"] == "Count: 42, Name: test"
+
+
+class TestRefMarker:
+    """Tests for ref() marker - artifact passthrough."""
+
+    def test_ref_returns_artifact(self):
+        """Test that ref() returns the ICacheable artifact directly."""
+        params = {"poly": ref("p")}
+        poly_artifact = Polynomial((1, 2, 1))
+        deps = {"p": poly_artifact}
+        result = resolve_params(params, deps)
+        assert result["poly"] is poly_artifact
+        assert isinstance(result["poly"], Polynomial)
+
+    def test_ref_with_integer(self):
+        """Test ref() with Integer artifact."""
+        params = {"value": ref("x")}
+        deps = {"x": Integer(42)}
+        result = resolve_params(params, deps)
+        assert isinstance(result["value"], Integer)
+        assert result["value"].value == 42
+
+    def test_ref_undeclared_dependency(self):
+        """Test that ref() with undeclared dependency raises ValueError."""
+        params = {"value": ref("missing")}
+        deps = {}
+        with pytest.raises(ValueError, match="undeclared dependency"):
+            resolve_params(params, deps)
+
+    def test_ref_nested_in_dict(self):
+        """Test ref() marker nested in dictionary."""
+        params = {"config": {"poly": ref("p"), "count": 5}}
+        poly_artifact = Polynomial((1, 2, 1))
+        deps = {"p": poly_artifact}
+        result = resolve_params(params, deps)
+        assert result["config"]["poly"] is poly_artifact
+        assert result["config"]["count"] == 5
+
+    def test_ref_nested_in_list(self):
+        """Test ref() marker nested in list."""
+        params = {"polys": [ref("p"), ref("q")]}
+        p_artifact = Polynomial((1, 2))
+        q_artifact = Polynomial((3, 4))
+        deps = {"p": p_artifact, "q": q_artifact}
+        result = resolve_params(params, deps)
+        assert result["polys"][0] is p_artifact
+        assert result["polys"][1] is q_artifact
+
+
+class TestCelMarker:
+    """Tests for cel() marker - CEL expression evaluation."""
+
+    def test_cel_simple_expression(self):
+        """Test cel() with simple arithmetic expression."""
+        params = {"sum": cel("x.value + y.value")}
+        deps = {"x": Integer(3), "y": Integer(7)}
+        result = resolve_params(params, deps)
+        assert result["sum"] == 10
+
+    def test_cel_field_access(self):
+        """Test cel() accessing artifact field."""
+        params = {"width": cel("background.value")}
+        deps = {"background": Integer(100)}
+        result = resolve_params(params, deps)
+        assert result["width"] == 100
+
+    def test_cel_decimal_arithmetic(self):
+        """Test cel() with decimal arithmetic."""
+        params = {"result": cel('decimal("3.14") + decimal("2.86")')}
+        deps = {}
+        result = resolve_params(params, deps)
+        assert isinstance(result["result"], Decimal)
+        assert result["result"] == Decimal("6.00")
+
+    def test_cel_min_max(self):
+        """Test cel() with min/max functions."""
+        params = {
+            "min_val": cel("min(x.value, y.value)"),
+            "max_val": cel("max(x.value, y.value)"),
+        }
+        deps = {"x": Integer(7), "y": Integer(3)}
+        result = resolve_params(params, deps)
+        assert result["min_val"] == 3
+        assert result["max_val"] == 7
+
+    def test_cel_undeclared_dependency(self):
+        """Test that cel() with undeclared dependency raises ValueError."""
+        params = {"value": cel("missing.value")}
+        deps = {}
+        with pytest.raises(ValueError, match="Failed to evaluate CEL expression"):
+            resolve_params(params, deps)
+
+    def test_cel_nested_in_dict(self):
+        """Test cel() marker nested in dictionary."""
+        params = {"config": {"width": cel("bg.value"), "height": 200}}
+        deps = {"bg": Integer(100)}
+        result = resolve_params(params, deps)
+        assert result["config"]["width"] == 100
+        assert result["config"]["height"] == 200
+
+    def test_cel_vs_string_interpolation(self):
+        """Test that cel() and ${...} string interpolation both work."""
+        params = {
+            "computed": cel("x.value + y.value"),
+            "message": "Sum is ${x.value + y.value}",
+        }
+        deps = {"x": Integer(3), "y": Integer(7)}
+        result = resolve_params(params, deps)
+        assert result["computed"] == 10
+        assert result["message"] == "Sum is 10"

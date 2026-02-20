@@ -1,6 +1,6 @@
 """End-to-end tests for context/external dependency support."""
 
-from invariant import Executor, Node, OpRegistry
+from invariant import Executor, Node, OpRegistry, cel
 from invariant.ops.stdlib import from_integer
 from invariant.store.memory import MemoryStore
 from invariant.types import Integer
@@ -52,12 +52,12 @@ def test_context_external_dependencies():
     graph = {
         "background": Node(
             op_name="stdlib:from_integer",
-            params={"value": "${root_width.value}"},  # Access value from Integer
+            params={"value": cel("root_width.value")},  # Access value from Integer
             deps=["root_width"],
         ),
         "height": Node(
             op_name="stdlib:from_integer",
-            params={"value": "${root_height.value}"},
+            params={"value": cel("root_height.value")},
             deps=["root_height"],
         ),
     }
@@ -114,7 +114,7 @@ def test_context_with_graph_nodes():
         ),
         "combined": Node(
             op_name="stdlib:add",
-            params={"a": "${external.value}", "b": "${internal.value}"},
+            params={"a": cel("external.value"), "b": cel("internal.value")},
             deps=["external", "internal"],
         ),
     }

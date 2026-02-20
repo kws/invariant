@@ -1,6 +1,6 @@
 """End-to-end tests for commutative operation canonicalization."""
 
-from invariant import Executor, Node, OpRegistry
+from invariant import Executor, Node, OpRegistry, cel, ref
 from invariant.ops.stdlib import add, from_integer
 from invariant.store.memory import MemoryStore
 
@@ -28,13 +28,19 @@ def test_commutative_canonicalization():
         # First node: explicitly uses x, y order
         "sum_xy": Node(
             op_name="stdlib:add",
-            params={"a": "${min(x, y)}", "b": "${max(x, y)}"},
+            params={
+                "a": cel("min(x.value, y.value)"),
+                "b": cel("max(x.value, y.value)"),
+            },
             deps=["x", "y"],
         ),
         # Second node: uses y, x order in expressions — same result!
         "sum_yx": Node(
             op_name="stdlib:add",
-            params={"a": "${min(y, x)}", "b": "${max(y, x)}"},
+            params={
+                "a": cel("min(y.value, x.value)"),
+                "b": cel("max(y.value, x.value)"),
+            },
             deps=["x", "y"],
         ),
     }
@@ -76,12 +82,12 @@ def test_commutative_without_canonicalization():
         # (but same mathematical result)
         "sum_xy": Node(
             op_name="stdlib:add",
-            params={"a": "${x}", "b": "${y}"},
+            params={"a": ref("x"), "b": ref("y")},
             deps=["x", "y"],
         ),
         "sum_yx": Node(
             op_name="stdlib:add",
-            params={"a": "${y}", "b": "${x}"},
+            params={"a": ref("y"), "b": ref("x")},
             deps=["x", "y"],
         ),
     }

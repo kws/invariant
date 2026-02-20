@@ -2,6 +2,7 @@
 
 import pytest
 
+from invariant import cel, ref
 from invariant.executor import Executor
 from invariant.node import Node
 from invariant.types import Integer, String
@@ -11,11 +12,8 @@ def test_execute_simple_graph(registry, store):
     """Test executing a simple linear graph."""
 
     # Register an op
-    def identity_op(manifest: dict) -> String:
-        value = manifest["value"]
-        if isinstance(value, String):
-            return value
-        return String(str(value))
+    def identity_op(value: String) -> String:
+        return value
 
     registry.register("identity", identity_op)
 
@@ -38,22 +36,24 @@ def test_execute_with_caching(registry, store):
     """Test that caching works correctly."""
     call_count = {"count": 0}
 
-    def counting_op(manifest: dict) -> Integer:
+    def counting_op() -> int:
         call_count["count"] += 1
-        return Integer(42)
+        return 42
 
     registry.register("count_op", counting_op)
 
     # Create graph with same op called twice with same inputs
     graph = {
-        "a": Node(op_name="count_op", params={"x": Integer(1)}, deps=[]),
-        "b": Node(op_name="count_op", params={"x": Integer(1)}, deps=[]),
+        "a": Node(op_name="count_op", params={}, deps=[]),
+        "b": Node(op_name="count_op", params={}, deps=[]),
     }
 
     executor = Executor(registry, store)
     results = executor.execute(graph)
 
-    # Both should return same result
+    # Both should return same result (wrapped as Integer by executor)
+    assert isinstance(results["a"], Integer)
+    assert isinstance(results["b"], Integer)
     assert results["a"].value == 42
     assert results["b"].value == 42
     # But op should only be called once (deduplication)
@@ -97,7 +97,9 @@ def test_execute_with_caching(registry, store):
     # Actually, the executor adds deps to manifest, so even with empty deps,
     # the manifest might be the same. Let me check the actual behavior.
 
-    # For now, let's just verify the results are correct
+    # For now, let's just verify the results are correct (wrapped as Integer)
+    assert isinstance(results2["a"], Integer)
+    assert isinstance(results2["b"], Integer)
     assert results2["a"].value == 42
     assert results2["b"].value == 42
 
@@ -105,20 +107,21 @@ def test_execute_with_caching(registry, store):
 def test_execute_diamond_pattern(registry, store):
     """Test executing a diamond dependency pattern."""
 
-    def add_one(manifest: dict) -> Integer:
-        value = manifest.get("value", Integer(0))
-        if isinstance(value, Integer):
-            return Integer(value.value + 1)
-        return Integer(1)
+    def add_one(value: int = 0) -> int:
+        return value + 1
 
     registry.register("add_one", add_one)
 
     # Diamond: a -> b, c -> d
     graph = {
-        "a": Node(op_name="add_one", params={"value": Integer(0)}, deps=[]),
-        "b": Node(op_name="add_one", params={}, deps=["a"]),
-        "c": Node(op_name="add_one", params={}, deps=["a"]),
-        "d": Node(op_name="add_one", params={}, deps=["b", "c"]),
+        "a": Node(op_name="add_one", params={"value": 0}, deps=[]),
+        "b": Node(op_name="add_one", params={"value": cel("a.value")}, deps=["a"]),
+        "c": Node(op_name="add_one", params={"value": cel("a.value")}, deps=["a"]),
+        "d": Node(
+            op_name="add_one",
+            params={"value": cel("b.value + c.value")},
+            deps=["b", "c"],
+        ),
     }
 
     executor = Executor(registry, store)
@@ -155,27 +158,25 @@ def test_execute_invalid_graph(registry, store):
 def test_execute_with_upstream_artifacts(registry, store):
     """Test that upstream artifacts are passed to downstream nodes."""
 
-    def identity(manifest: dict) -> String:
-        return manifest["value"]
+    def identity(value: String) -> String:
+        return value
 
-    def append(manifest: dict) -> String:
-        # Get upstream artifact
-        upstream = manifest.get("a")  # Node ID of dependency
-        if isinstance(upstream, String):
-            return String(upstream.value + "_suffix")
-        return String("unknown")
+    def append(a: String) -> str:
+        # Get upstream artifact by parameter name (node ID)
+        return a.value + "_suffix"
 
     registry.register("identity", identity)
     registry.register("append", append)
 
     graph = {
         "a": Node(op_name="identity", params={"value": String("hello")}, deps=[]),
-        "b": Node(op_name="append", params={}, deps=["a"]),
+        "b": Node(op_name="append", params={"a": ref("a")}, deps=["a"]),
     }
 
     executor = Executor(registry, store)
     results = executor.execute(graph)
 
     assert isinstance(results["a"], String)
+    # Result is wrapped as String by executor
     assert isinstance(results["b"], String)
     assert results["b"].value == "hello_suffix"

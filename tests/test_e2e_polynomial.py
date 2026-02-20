@@ -1,6 +1,6 @@
 """End-to-end tests for polynomial operations pipeline."""
 
-from invariant import Executor, Node, OpRegistry
+from invariant import Executor, Node, OpRegistry, ref
 from invariant.ops import poly
 from invariant.store.memory import MemoryStore
 from invariant.types import Integer
@@ -34,55 +34,55 @@ def test_distributive_law_pipeline():
         # Left branch: (p + q) * r
         "p_plus_q": Node(
             op_name="poly:add",
-            params={},
+            params={"a": ref("p"), "b": ref("q")},
             deps=["p", "q"],
         ),
         "lhs": Node(
             op_name="poly:multiply",
-            params={},
+            params={"a": ref("p_plus_q"), "b": ref("r")},
             deps=["p_plus_q", "r"],
         ),
         # Right branch: p*r + q*r
         "pr": Node(
             op_name="poly:multiply",
-            params={},
+            params={"a": ref("p"), "b": ref("r")},
             deps=["p", "r"],
         ),
         "qr": Node(
             op_name="poly:multiply",
-            params={},
+            params={"a": ref("q"), "b": ref("r")},
             deps=["q", "r"],
         ),
         "rhs": Node(
             op_name="poly:add",
-            params={},
+            params={"a": ref("pr"), "b": ref("qr")},
             deps=["pr", "qr"],
         ),
         # Evaluate both sides at x=5
         "eval_lhs": Node(
             op_name="poly:evaluate",
-            params={"x": Integer(5)},
+            params={"poly": ref("lhs"), "x": 5},
             deps=["lhs"],
         ),
         "eval_rhs": Node(
             op_name="poly:evaluate",
-            params={"x": Integer(5)},
+            params={"poly": ref("rhs"), "x": 5},
             deps=["rhs"],
         ),
         # Bonus: derivative chain
         "d1": Node(
             op_name="poly:derivative",
-            params={},
+            params={"poly": ref("lhs")},
             deps=["lhs"],
         ),
         "d2": Node(
             op_name="poly:derivative",
-            params={},
+            params={"poly": ref("d1")},
             deps=["d1"],
         ),
         "eval_d2": Node(
             op_name="poly:evaluate",
-            params={"x": Integer(5)},
+            params={"poly": ref("d2"), "x": 5},
             deps=["d2"],
         ),
     }
@@ -94,7 +94,9 @@ def test_distributive_law_pipeline():
     # Verify distributive law: (p + q) * r == p*r + q*r
     assert results["lhs"].coefficients == results["rhs"].coefficients
 
-    # Verify numeric equality at x=5
+    # Verify numeric equality at x=5 (results are wrapped as Integer by executor)
+    assert isinstance(results["eval_lhs"], Integer)
+    assert isinstance(results["eval_rhs"], Integer)
     assert results["eval_lhs"].value == results["eval_rhs"].value
 
     # Verify derivative chain
@@ -120,7 +122,7 @@ def test_cache_reuse():
         ),
         "sum": Node(
             op_name="poly:add",
-            params={},
+            params={"a": ref("p"), "b": ref("q")},
             deps=["p", "q"],
         ),
     }
