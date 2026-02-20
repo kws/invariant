@@ -64,10 +64,60 @@ def dict_get(dict_obj: dict[str, Any], key: str) -> Any:
     return dict_obj[key]
 
 
+def make_dict(**kwargs: Any) -> dict[str, Any]:
+    """Construct a dictionary from resolved parameters.
+
+    This operation collects all resolved parameters (which may have been
+    constructed using ref() and cel() markers) into a new dictionary artifact.
+
+    Args:
+        **kwargs: Any number of key-value pairs. Keys must be strings.
+                 Values can be any cacheable type (resolved from ref/cel markers).
+
+    Returns:
+        A dictionary containing all the key-value pairs from kwargs.
+
+    Example:
+        Node(
+            op_name="stdlib:make_dict",
+            params={"width": cel("bg.width"), "color": ref("fg_color")},
+            deps=["bg", "fg_color"],
+        )
+        # Returns: {"width": 144, "color": "#ff0000"}
+    """
+    return dict(kwargs)
+
+
+def make_list(items: list[Any]) -> list[Any]:
+    """Construct a list from resolved items.
+
+    This operation takes a list parameter (which may contain ref() and cel()
+    markers that get resolved during parameter resolution) and returns it as
+    a new list artifact.
+
+    Args:
+        items: A list of cacheable values (resolved from ref/cel markers).
+
+    Returns:
+        A list containing all the resolved items.
+
+    Example:
+        Node(
+            op_name="stdlib:make_list",
+            params={"items": [ref("a"), ref("b"), cel("c + 1")]},
+            deps=["a", "b", "c"],
+        )
+        # Returns: [<resolved a>, <resolved b>, <resolved c+1>]
+    """
+    return list(items)
+
+
 # Package of standard operations
 OPS: dict[str, Any] = {
     "identity": identity,
     "add": add,
     "multiply": multiply,
     "dict_get": dict_get,
+    "make_dict": make_dict,
+    "make_list": make_list,
 }

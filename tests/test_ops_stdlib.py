@@ -2,7 +2,7 @@
 
 import pytest
 
-from invariant.ops.stdlib import add, dict_get, identity, multiply
+from invariant.ops.stdlib import add, dict_get, identity, make_dict, make_list, multiply
 
 
 class TestIdentity:
@@ -80,3 +80,56 @@ class TestDictGet:
         """Test that non-dict raises TypeError."""
         with pytest.raises(TypeError):
             dict_get(dict_obj="not a dict", key="a")
+
+
+class TestMakeDict:
+    """Tests for make_dict operation."""
+
+    def test_make_dict_basic(self):
+        """Test constructing a dict from kwargs."""
+        result = make_dict(a=1, b=2, c="test")
+        assert isinstance(result, dict)
+        assert result == {"a": 1, "b": 2, "c": "test"}
+
+    def test_make_dict_empty(self):
+        """Test constructing an empty dict."""
+        result = make_dict()
+        assert isinstance(result, dict)
+        assert result == {}
+
+    def test_make_dict_nested(self):
+        """Test constructing a dict with nested values."""
+        result = make_dict(
+            width=144,
+            height=72,
+            metadata={"color": "red", "size": "large"},
+        )
+        assert result["width"] == 144
+        assert result["height"] == 72
+        assert result["metadata"] == {"color": "red", "size": "large"}
+
+
+class TestMakeList:
+    """Tests for make_list operation."""
+
+    def test_make_list_basic(self):
+        """Test constructing a list from items."""
+        result = make_list(items=[1, 2, 3])
+        assert isinstance(result, list)
+        assert result == [1, 2, 3]
+
+    def test_make_list_empty(self):
+        """Test constructing an empty list."""
+        result = make_list(items=[])
+        assert isinstance(result, list)
+        assert result == []
+
+    def test_make_list_mixed_types(self):
+        """Test constructing a list with mixed types."""
+        result = make_list(items=[1, "test", True, None])
+        assert result == [1, "test", True, None]
+
+    def test_make_list_nested(self):
+        """Test constructing a list with nested structures."""
+        result = make_list(items=[[1, 2], {"a": 1}, "string"])
+        assert result == [[1, 2], {"a": 1}, "string"]
