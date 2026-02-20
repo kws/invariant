@@ -152,6 +152,118 @@ class TestStringInterpolation:
         assert "3.14" in result["message"]
 
 
+class TestWholeStringReturnType:
+    """Tests for whole-string ${expr} return type behavior.
+
+    See expressions.md §2.3 for whole-string return type behavior.
+    """
+
+    def test_whole_string_returns_int(self):
+        """Test that whole-string ${expr} returns native type (int, not string).
+        See expressions.md §2.3 for whole-string return type behavior.
+        """
+        params = {"width": "${x}"}
+        deps = {"x": 100}
+        result = resolve_params(params, deps)
+        assert result["width"] == 100
+        assert isinstance(result["width"], int)
+        assert not isinstance(result["width"], str)
+
+    def test_whole_string_returns_decimal(self):
+        """Test that whole-string ${expr} returns native type (Decimal, not string).
+        See expressions.md §2.3 for whole-string return type behavior.
+        """
+        params = {"pi": '${decimal("3.14")}'}
+        deps = {}
+        result = resolve_params(params, deps)
+        assert isinstance(result["pi"], Decimal)
+        assert result["pi"] == Decimal("3.14")
+        assert not isinstance(result["pi"], str)
+
+    def test_whole_string_returns_string(self):
+        """Test that whole-string ${expr} preserves string type.
+        See expressions.md §2.3 for whole-string return type behavior.
+        """
+        params = {"name": "${x}"}
+        deps = {"x": "hello"}
+        result = resolve_params(params, deps)
+        assert result["name"] == "hello"
+        assert isinstance(result["name"], str)
+
+    def test_whole_string_with_surrounding_whitespace(self):
+        """Test that whole-string with surrounding whitespace returns native type after trimming.
+        See expressions.md §2.3 for whole-string return type behavior.
+        """
+        params = {"value": "  ${x}  "}
+        deps = {"x": 100}
+        result = resolve_params(params, deps)
+        assert result["value"] == 100
+        assert isinstance(result["value"], int)
+        assert not isinstance(result["value"], str)
+
+    def test_whole_string_with_internal_whitespace(self):
+        """Test that whole-string with internal whitespace returns native type.
+        See expressions.md §2.3 for whole-string return type behavior.
+        """
+        params = {"value": "${ x }"}
+        deps = {"x": 100}
+        result = resolve_params(params, deps)
+        assert result["value"] == 100
+        assert isinstance(result["value"], int)
+        assert not isinstance(result["value"], str)
+
+    def test_whole_string_equivalent_to_cel_int(self):
+        """Test that ${expr} and cel("expr") produce identical results for int when whole-string.
+        See expressions.md §2.3 for whole-string return type behavior.
+        """
+        params_a = {"value": "${x}"}
+        params_b = {"value": cel("x")}
+        deps = {"x": 100}
+        result_a = resolve_params(params_a, deps)
+        result_b = resolve_params(params_b, deps)
+        assert result_a["value"] == result_b["value"]
+        assert type(result_a["value"]) is type(result_b["value"])
+        assert isinstance(result_a["value"], int)
+
+    def test_whole_string_equivalent_to_cel_decimal(self):
+        """Test that ${expr} and cel("expr") produce identical results for Decimal when whole-string.
+        See expressions.md §2.3 for whole-string return type behavior.
+        """
+        params_a = {"value": '${decimal("3.14")}'}
+        params_b = {"value": cel('decimal("3.14")')}
+        deps = {}
+        result_a = resolve_params(params_a, deps)
+        result_b = resolve_params(params_b, deps)
+        assert result_a["value"] == result_b["value"]
+        assert type(result_a["value"]) is type(result_b["value"])
+        assert isinstance(result_a["value"], Decimal)
+
+    def test_whole_string_equivalent_to_cel_string(self):
+        """Test that ${expr} and cel("expr") produce identical results for str when whole-string.
+        See expressions.md §2.3 for whole-string return type behavior.
+        """
+        params_a = {"value": "${x}"}
+        params_b = {"value": cel("x")}
+        deps = {"x": "hello"}
+        result_a = resolve_params(params_a, deps)
+        result_b = resolve_params(params_b, deps)
+        assert result_a["value"] == result_b["value"]
+        assert type(result_a["value"]) is type(result_b["value"])
+        assert isinstance(result_a["value"], str)
+
+    def test_mixed_text_always_returns_string(self):
+        """Test that mixed text always returns string, contrasting with whole-string behavior.
+        See expressions.md §2.3 for whole-string return type behavior.
+        """
+        params = {"message": "Width is ${x}px"}
+        deps = {"x": 100}
+        result = resolve_params(params, deps)
+        assert result["message"] == "Width is 100px"
+        assert isinstance(result["message"], str)
+        # Contrast: whole-string would return int, but mixed text always returns str
+        assert not isinstance(result["message"], int)
+
+
 class TestBuiltInFunctions:
     """Tests for built-in functions: min, max, decimal."""
 

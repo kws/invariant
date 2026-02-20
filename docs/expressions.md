@@ -175,7 +175,7 @@ Strings containing `${expression}` delimiters evaluate the embedded CEL expressi
 
 **Behavior — two cases:**
 
-1. **Whole-string expression** (`"${expr}"` with no surrounding text): Evaluates the expression and returns its **native type** (int, Decimal, etc.), not a string.
+1. **Whole-string expression** (`"${expr}"` with no surrounding text): Evaluates the expression and returns its **native type** (int, Decimal, etc.), not a string. Whitespace is trimmed when determining if an expression covers the entire string, so `"  ${x}  "` (with surrounding whitespace) is treated as a whole-string expression and returns the native type. When whole-string, `"${expr}"` is functionally equivalent to `cel("expr")` — both produce identical results (same value and type).
 2. **Mixed text and expressions** (`"text ${expr} text"` or multiple `${...}`): Evaluates each expression, converts results to strings, and substitutes them into the text. Always returns a `str`.
 
 **Example — whole-string expression (returns native type):**
@@ -483,6 +483,7 @@ Node(
 )
 
 # Equivalent using ${...} (whole-string expression returns native type)
+# When the expression covers the entire string, ${expr} and cel("expr") are functionally equivalent
 Node(
     op_name="stdlib:identity",
     params={"value": "${source}"},
@@ -625,23 +626,26 @@ results = executor.execute(graph, context={"root": root})
 
 ---
 
-### F-05: Architecture Doc References "YAML/JSON Definition"
+### F-05: Architecture Doc References "YAML/JSON Definition" [RESOLVED]
 
-**Documentation says** (architecture.md §5.1): "Decouples the 'string' name in the YAML/JSON definition from the actual Python code."
+**Original issue:** Documentation said (architecture.md §5.1): "Decouples the 'string' name in the YAML/JSON definition from the actual Python code."
 
 **Implementation:** The system uses Python dict graph definitions exclusively. There is no YAML/JSON parser or loader.
 
-**Impact:** Cosmetic — this appears to be aspirational language from the design doc. Not incorrect per se, but potentially misleading.
+**Resolution:** Documentation has been updated in architecture.md §5.1 to remove the YAML/JSON reference, changing it to "graph definition" to accurately reflect that the system uses Python dict graph definitions exclusively.
 
 ---
 
-### F-06: `${expr}` Whole-String Return Type
+### F-06: `${expr}` Whole-String Return Type [RESOLVED]
 
-**Documentation** does not explicitly state that `"${expr}"` returns the native type when the expression covers the entire string.
+**Original issue:** Documentation did not explicitly state that `"${expr}"` returns the native type when the expression covers the entire string.
 
 **Implementation:** When the `${...}` expression is the entire string content (after trimming), `_evaluate_expression()` returns the native CEL result (int, Decimal, etc.) rather than converting to string. For example, `"${x}"` where x is `100` (native int) returns `100` (int), not `"100"` (string).
 
-**Impact:** This is correct and desirable behavior, but should be explicitly documented. The current behavior means `"${expr}"` and `cel("expr")` are functionally equivalent when the expression covers the entire string.
+**Resolution:** Documentation has been updated in expressions.md §2.3 to explicitly state:
+- Whole-string expressions return native types (not strings)
+- Whitespace is trimmed when determining if an expression covers the entire string
+- `"${expr}"` and `cel("expr")` are functionally equivalent when whole-string
 
 **Source:** `expressions.py` `_evaluate_expression()` lines 201–204.
 
