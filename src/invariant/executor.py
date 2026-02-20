@@ -60,9 +60,8 @@ class Executor:
         context = context or {}
         sorted_nodes = self.resolver.resolve(graph, context_keys=set(context.keys()))
 
-        # Track artifacts by node ID and by (op_name, digest) (for deduplication)
+        # Track artifacts by node ID
         artifacts_by_node: dict[str, Any] = {}
-        artifacts_by_digest: dict[tuple[str, str], Any] = {}
 
         # Inject context values into artifacts_by_node before execution
         # This makes external dependencies available to any node that declares them in deps
@@ -84,15 +83,9 @@ class Executor:
             digest = hash_manifest(manifest)
 
             # Phase 2: Execute or retrieve from cache
-            # Use composite key (op_name, digest) for cache lookup
-            cache_key = (node.op_name, digest)
-            if cache_key in artifacts_by_digest:
-                # Deduplication: reuse existing artifact
-                artifact = artifacts_by_digest[cache_key]
-            elif self.store.exists(node.op_name, digest):
+            if self.store.exists(node.op_name, digest):
                 # Cache hit: retrieve from store
                 artifact = self.store.get(node.op_name, digest)
-                artifacts_by_digest[cache_key] = artifact
             else:
                 # Cache miss: execute operation
                 op = self.registry.get(node.op_name)
@@ -100,7 +93,6 @@ class Executor:
 
                 # Persist to store
                 self.store.put(node.op_name, digest, artifact)
-                artifacts_by_digest[cache_key] = artifact
 
             artifacts_by_node[node_id] = artifact
 
