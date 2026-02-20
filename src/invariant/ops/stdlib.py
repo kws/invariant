@@ -1,18 +1,13 @@
 """Standard operations library for basic data manipulation."""
 
-from collections.abc import Mapping
-from decimal import Decimal
 from typing import Any
 
-from invariant.protocol import ICacheable
-from invariant.types import DecimalValue, Integer, String
 
-
-def identity(value: ICacheable) -> ICacheable:
+def identity(value: Any) -> Any:
     """Identity operation: returns the input unchanged.
 
     Args:
-        value: An ICacheable value.
+        value: Any cacheable value.
 
     Returns:
         The input value unchanged.
@@ -46,11 +41,11 @@ def multiply(a: int, b: int) -> int:
     return a * b
 
 
-def dict_get(dict_obj: Mapping[str, Any], key: str) -> Any:
-    """Extract a value from a dictionary artifact.
+def dict_get(dict_obj: dict[str, Any], key: str) -> Any:
+    """Extract a value from a dictionary.
 
     Args:
-        dict_obj: Dictionary-like object (must be ICacheable and Mapping).
+        dict_obj: Dictionary object.
         key: String key to look up.
 
     Returns:
@@ -58,43 +53,15 @@ def dict_get(dict_obj: Mapping[str, Any], key: str) -> Any:
 
     Raises:
         KeyError: If key not in dictionary.
-        TypeError: If dict_obj is not dict-like or not ICacheable.
+        TypeError: If dict_obj is not a dict.
     """
-    if not isinstance(dict_obj, ICacheable):
-        raise TypeError(f"dict_get op requires ICacheable dict, got {type(dict_obj)}")
+    if not isinstance(dict_obj, dict):
+        raise TypeError(f"dict_get op requires dict, got {type(dict_obj)}")
 
-    if not isinstance(dict_obj, Mapping) and not hasattr(dict_obj, "__getitem__"):
-        raise TypeError(f"dict_get op requires dict-like object, got {type(dict_obj)}")
-
-    # Try to get the value
-    try:
-        value = dict_obj[key]  # type: ignore
-    except (KeyError, TypeError):
+    if key not in dict_obj:
         raise KeyError(f"Key '{key}' not found in dictionary")
 
-    # Return as ICacheable if it is, otherwise wrap it
-    if isinstance(value, ICacheable):
-        return value
-    elif isinstance(value, str):
-        return String(value)
-    elif isinstance(value, int):
-        return Integer(value)
-    elif isinstance(value, Decimal):
-        return DecimalValue(value)
-    else:
-        raise TypeError(f"Cannot convert value type {type(value)} to ICacheable")
-
-
-def from_integer(value: int) -> Integer:
-    """Create an Integer from an integer value.
-
-    Args:
-        value: An integer value.
-
-    Returns:
-        Integer wrapping the value.
-    """
-    return Integer(value)
+    return dict_obj[key]
 
 
 # Package of standard operations
@@ -102,6 +69,5 @@ OPS: dict[str, Any] = {
     "identity": identity,
     "add": add,
     "multiply": multiply,
-    "from_integer": from_integer,
     "dict_get": dict_get,
 }
