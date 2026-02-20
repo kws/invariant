@@ -53,14 +53,14 @@ Examples
 --------
 
 Basic variable access:
-    >>> params = {"width": "${background.width}"}
-    >>> deps = {"background": Integer(100)}
+    >>> params = {"width": "${background}"}
+    >>> deps = {"background": 100}
     >>> resolve_params(params, deps)
     {"width": 100}
 
 Arithmetic with multiple dependencies:
-    >>> params = {"sum": "${x.value + y.value}"}
-    >>> deps = {"x": Integer(3), "y": Integer(7)}
+    >>> params = {"sum": "${x + y}"}
+    >>> deps = {"x": 3, "y": 7}
     >>> resolve_params(params, deps)
     {"sum": 10}
 
@@ -72,7 +72,7 @@ Decimal arithmetic (avoiding floats):
 
 Using min/max for canonicalization:
     >>> params = {"a": "${min(x, y)}", "b": "${max(x, y)}"}
-    >>> deps = {"x": Integer(7), "y": Integer(3)}
+    >>> deps = {"x": 7, "y": 3}
     >>> resolved = resolve_params(params, deps)
     >>> resolved["a"]  # Returns 3 (the smaller value)
     3
@@ -80,8 +80,8 @@ Using min/max for canonicalization:
     7
 
 String interpolation:
-    >>> params = {"message": "Width is ${width.value}px"}
-    >>> deps = {"width": Integer(200)}
+    >>> params = {"message": "Width is ${width}px"}
+    >>> deps = {"width": 200}
     >>> resolve_params(params, deps)
     {"message": "Width is 200px"}
 """

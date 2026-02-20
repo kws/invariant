@@ -75,7 +75,7 @@ def poly_scale(poly: Polynomial, scalar: int) -> Polynomial:
 
     Args:
         poly: Polynomial to scale.
-        scalar: Integer scalar value.
+        scalar: int scalar value.
 
     Returns:
         Polynomial with all coefficients multiplied by scalar.
@@ -116,10 +116,10 @@ def poly_evaluate(poly: Polynomial, x: int) -> int:
 
     Args:
         poly: Polynomial to evaluate.
-        x: Integer value to evaluate at.
+        x: int value to evaluate at.
 
     Returns:
-        Integer result of evaluation.
+        int result of evaluation.
     """
     # Horner's method: evaluate from highest degree down
     # For polynomial c[0] + c[1]*x + c[2]*x^2 + ... + c[n]*x^n

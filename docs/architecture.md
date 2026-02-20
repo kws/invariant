@@ -108,7 +108,7 @@ The engine traverses the user-defined DAG. For each Node, it resolves param mark
   * *If True:* Returns the stored Artifact. **Op is strictly skipped.**  
 * **Step 2: Execution**  
   * *If False:* Engine inspects the op function signature and maps manifest keys to function parameters by name (`**kwargs` dispatch).  
-  * Engine performs best-effort type unwrapping (e.g., `Integer` → `int`) when the op expects native types.  
+  * Engine passes manifest values directly to ops. Native types are stored and used directly without wrapping.  
   * Engine invokes the op with resolved arguments and validates the return value is cacheable.  
 * **Step 3: Persistence**  
   * The resulting Artifact is serialized and saved to ArtifactStore under Operation and Digest.
@@ -380,7 +380,7 @@ The following operations are implemented as plain Python functions with typed pa
 | `poly:derivative` | `poly: Polynomial` | `Polynomial` | `c[i] * i` shifted down one degree |
 | `poly:evaluate` | `poly: Polynomial, x: int` | `int` | Horner's method, pure integer result |
 
-All ops are plain Python functions with standard type annotations. The Executor inspects function signatures and maps resolved params to function arguments by name, performing best-effort type unwrapping (e.g., `Integer` → `int`) when needed.
+All ops are plain Python functions with standard type annotations. The Executor inspects function signatures and maps resolved params to function arguments by name. Native types are passed directly to ops without wrapping.
 
 ### **8.4 Reference DAG: Distributive-Law Verification**
 
@@ -527,7 +527,7 @@ assert results["eval_lhs"].value == results["eval_rhs"].value
 
 # Verify derivative chain
 # d2 should be the second derivative of lhs
-assert isinstance(results["eval_d2"], Integer)
+assert isinstance(results["eval_d2"], int)
 ```
 
 ### **8.6 Pipeline Features Exercised**

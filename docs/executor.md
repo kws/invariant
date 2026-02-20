@@ -429,17 +429,7 @@ The **Cacheable Type Universe** defines what values can appear in manifests, be 
 | `bytes` | Not yet supported |
 | Arbitrary objects | Not serializable/hashable |
 
-**Wrapping** (`to_cacheable()`):
-
-| Input | Output |
-|:--|:--|
-| `int` | `Integer(value)` |
-| `str` | `String(value)` |
-| `Decimal` | `DecimalValue(value)` |
-| `bool` | `Integer(int(value))` |
-| `ICacheable` | Passed through |
-| `None` | `NotImplementedError` |
-| `dict`, `list`, `tuple` | `NotImplementedError` |
+**Note:** Native types are stored directly without wrapping. No wrapper types exist. The store codec handles serialization of all cacheable types uniformly.
 
 ---
 
@@ -456,8 +446,8 @@ registry = OpRegistry()
 registry.register_package("stdlib", stdlib)
 
 graph = {
-    "x": Node(op_name="stdlib:from_integer", params={"value": 5}, deps=[]),
-    "y": Node(op_name="stdlib:from_integer", params={"value": 3}, deps=[]),
+    "x": Node(op_name="stdlib:identity", params={"value": 5}, deps=[]),
+    "y": Node(op_name="stdlib:identity", params={"value": 3}, deps=[]),
     "sum": Node(
         op_name="stdlib:add",
         params={"a": ref("x"), "b": ref("y")},
@@ -469,7 +459,7 @@ store = MemoryStore()
 executor = Executor(registry=registry, store=store)
 results = executor.execute(graph)
 
-assert results["sum"].value == 8
+assert results["sum"] == 8
 ```
 
 ### 10.2 Diamond Pattern with cel()
@@ -539,20 +529,18 @@ assert results["a"].value == results["b"].value == 42
 ### 10.5 External Context
 
 ```python
-from invariant.types import Integer
-
-context = {"width": Integer(144), "height": Integer(144)}
+context = {"width": 144, "height": 144}
 
 graph = {
     "bg": Node(
-        op_name="stdlib:from_integer",
-        params={"value": cel("width.value")},
+        op_name="stdlib:identity",
+        params={"value": cel("width")},
         deps=["width"],
     ),
 }
 
 results = executor.execute(graph, context=context)
-assert results["bg"].value == 144
+assert results["bg"] == 144
 ```
 
 ### 10.6 Complete Polynomial Pipeline
@@ -567,46 +555,39 @@ The following items are **disagreements or ambiguities** between documentation a
 
 ---
 
-### F-07: Limited Type Unwrapping
+### F-07: Limited Type Unwrapping [RESOLVED]
 
-**Documentation says** (architecture.md §4): "Engine performs best-effort type unwrapping (e.g., `Integer` → `int`) when the op expects native types."
+**Original issue:** Documentation said (architecture.md §4): "Engine performs best-effort type unwrapping (e.g., `Integer` → `int`) when the op expects native types." Documentation also referenced wrapper types `Integer`, `String`, `DecimalValue` that don't exist.
 
-**Implementation:** Only two unwrapping cases are implemented:
-- `Integer` → `int` (when parameter annotation is `int`)
-- `String` → `str` (when parameter annotation is `str`)
+**Implementation:** No wrapper types exist in the codebase. Native types (`int`, `str`, `Decimal`) are stored and passed directly to ops without any wrapping or unwrapping. The executor's `_invoke_op()` method passes manifest values directly to ops without type conversion.
 
-Other ICacheable types (e.g., `DecimalValue` → `Decimal`, `Polynomial` → tuple) are not unwrapped.
+**Resolution:** All references to wrapper types and unwrapping have been removed from documentation. Architecture.md has been updated to state that native types are passed directly. Examples have been updated to use native types. The wrapping table in executor.md has been removed.
 
-**Impact:** Ops that need `Decimal` values must accept `DecimalValue` or handle unwrapping themselves. Adding `DecimalValue → Decimal` unwrapping would be straightforward.
-
-**Source:** `executor.py` `_invoke_op()` lines 178–182.
+**Source:** `executor.py` `_invoke_op()` method (lines 138-192) — no unwrapping logic exists.
 
 ---
 
-### F-08: `bool` Wrapping Loses Type Information
+### F-08: `bool` Wrapping Loses Type Information [RESOLVED]
 
-**Documentation:** Not explicitly specified.
+**Original issue:** Documentation referenced `to_cacheable()` function that wraps `bool` values as `Integer(1)`, but this function doesn't exist.
 
-**Implementation:** `to_cacheable(True)` returns `Integer(1)`, not a hypothetical `Boolean(True)`. The `bool` check in `to_cacheable()` runs before the `int` check (since `bool` is a subclass of `int` in Python), but it still wraps as `Integer`.
+**Implementation:** No `to_cacheable()` function exists. Native `bool` values are stored directly without any wrapping. The `is_cacheable()` function validates that `bool` is cacheable, but no wrapping occurs.
 
-**Impact:** Round-tripping a `bool` through the cache produces an `int`. If an op returns `True`, the stored artifact is `Integer(1)`.
+**Resolution:** References to `to_cacheable()` have been removed from documentation. The wrapping table in executor.md has been removed. Documentation now accurately reflects that native `bool` values are stored directly.
 
-**Source:** `cacheable.py` `to_cacheable()` lines 139–140.
+**Source:** `cacheable.py` — only `is_cacheable()` exists, no `to_cacheable()` function.
 
 ---
 
-### F-09: Container Wrapping Not Implemented
+### F-09: Container Wrapping Not Implemented [RESOLVED]
 
-**Documentation:** `is_cacheable()` accepts `dict`, `list`, and `tuple` as cacheable types.
+**Original issue:** Documentation referenced `to_cacheable()` function that raises `NotImplementedError` for container types, but this function doesn't exist.
 
-**Implementation:** `to_cacheable()` raises `NotImplementedError` for container types. This means:
-- Containers can appear in manifests (they're hashable via `hash_value()`)
-- But ops cannot return containers as artifacts (wrapping fails)
-- Context values cannot be containers (wrapping fails)
+**Implementation:** No `to_cacheable()` function exists. Native container types (`dict`, `list`, `tuple`) are stored directly without any wrapping. The `is_cacheable()` function validates that containers with cacheable values are cacheable, but no wrapping occurs.
 
-**Impact:** This limits what ops can return and what context values can be. `DictArtifact` and `ListArtifact` types are planned but not yet implemented.
+**Resolution:** References to `to_cacheable()` have been removed from documentation. The wrapping table in executor.md has been removed. Documentation now accurately reflects that native container types are stored directly.
 
-**Source:** `cacheable.py` `to_cacheable()` lines 157–162.
+**Source:** `cacheable.py` — only `is_cacheable()` exists, no `to_cacheable()` function.
 
 ---
 
