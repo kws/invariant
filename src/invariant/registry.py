@@ -4,10 +4,8 @@ import types
 from importlib.metadata import entry_points
 from typing import Any, Callable
 
-from invariant.protocol import ICacheable
-
 # Type alias for op packages: dict mapping short names to op callables
-OpPackage = dict[str, Callable[[dict[str, Any]], ICacheable]]
+OpPackage = dict[str, Callable[..., Any]]
 
 
 class OpRegistry:
@@ -28,16 +26,16 @@ class OpRegistry:
     def __init__(self) -> None:
         """Initialize the registry (only once)."""
         if not OpRegistry._initialized:
-            self._ops: dict[str, Callable[[dict[str, Any]], ICacheable]] = {}
+            self._ops: dict[str, Callable[..., Any]] = {}
             OpRegistry._initialized = True
 
-    def register(self, name: str, op: Callable[[dict[str, Any]], ICacheable]) -> None:
+    def register(self, name: str, op: Callable[..., Any]) -> None:
         """Register an operation.
 
         Args:
             name: The string identifier for the operation.
             op: The callable that implements the operation.
-                Must accept a manifest (dict) and return an ICacheable.
+                Should be a plain Python function with typed parameters.
 
         Raises:
             ValueError: If name is empty or already registered.
@@ -48,7 +46,7 @@ class OpRegistry:
             raise ValueError(f"Operation '{name}' is already registered")
         self._ops[name] = op
 
-    def get(self, name: str) -> Callable[[dict[str, Any]], ICacheable]:
+    def get(self, name: str) -> Callable[..., Any]:
         """Get an operation by name.
 
         Args:
