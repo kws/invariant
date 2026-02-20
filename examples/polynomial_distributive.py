@@ -6,7 +6,7 @@ to verify the algebraic identity: (p + q) * r == p*r + q*r
 From section 8.5 of the architecture specification.
 """
 
-from invariant import Executor, Node, OpRegistry
+from invariant import Executor, Node, OpRegistry, ref
 from invariant.ops import poly
 from invariant.store.memory import MemoryStore
 from invariant.types import Integer
@@ -36,55 +36,55 @@ graph = {
     # Left branch: (p + q) * r
     "p_plus_q": Node(
         op_name="poly:add",
-        params={},
+        params={"a": ref("p"), "b": ref("q")},
         deps=["p", "q"],
     ),
     "lhs": Node(
         op_name="poly:multiply",
-        params={},
+        params={"a": ref("p_plus_q"), "b": ref("r")},
         deps=["p_plus_q", "r"],
     ),
     # Right branch: p*r + q*r
     "pr": Node(
         op_name="poly:multiply",
-        params={},
+        params={"a": ref("p"), "b": ref("r")},
         deps=["p", "r"],
     ),
     "qr": Node(
         op_name="poly:multiply",
-        params={},
+        params={"a": ref("q"), "b": ref("r")},
         deps=["q", "r"],
     ),
     "rhs": Node(
         op_name="poly:add",
-        params={},
+        params={"a": ref("pr"), "b": ref("qr")},
         deps=["pr", "qr"],
     ),
     # Evaluate both sides at x=5
     "eval_lhs": Node(
         op_name="poly:evaluate",
-        params={"x": Integer(5)},
+        params={"poly": ref("lhs"), "x": 5},
         deps=["lhs"],
     ),
     "eval_rhs": Node(
         op_name="poly:evaluate",
-        params={"x": Integer(5)},
+        params={"poly": ref("rhs"), "x": 5},
         deps=["rhs"],
     ),
     # Bonus: derivative chain
     "d1": Node(
         op_name="poly:derivative",
-        params={},
+        params={"poly": ref("lhs")},
         deps=["lhs"],
     ),
     "d2": Node(
         op_name="poly:derivative",
-        params={},
+        params={"poly": ref("d1")},
         deps=["d1"],
     ),
     "eval_d2": Node(
         op_name="poly:evaluate",
-        params={"x": Integer(5)},
+        params={"poly": ref("d2"), "x": 5},
         deps=["d2"],
     ),
 }

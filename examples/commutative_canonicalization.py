@@ -7,7 +7,7 @@ regardless of how dependencies are declared or referenced.
 From section 8.7 of the architecture specification.
 """
 
-from invariant import Executor, Node, OpRegistry
+from invariant import Executor, Node, OpRegistry, cel
 from invariant.ops.stdlib import add, from_integer
 from invariant.store.memory import MemoryStore
 
@@ -31,13 +31,13 @@ graph = {
     # First node: explicitly uses x, y order
     "sum_xy": Node(
         op_name="stdlib:add",
-        params={"a": "${min(x, y)}", "b": "${max(x, y)}"},
+        params={"a": cel("min(x.value, y.value)"), "b": cel("max(x.value, y.value)")},
         deps=["x", "y"],
     ),
     # Second node: uses y, x order in expressions — same result!
     "sum_yx": Node(
         op_name="stdlib:add",
-        params={"a": "${min(y, x)}", "b": "${max(y, x)}"},
+        params={"a": cel("min(y.value, x.value)"), "b": cel("max(y.value, x.value)")},
         deps=["x", "y"],
     ),
 }
