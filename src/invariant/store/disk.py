@@ -1,5 +1,6 @@
 """DiskStore: Filesystem-based artifact storage."""
 
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -101,7 +102,7 @@ class DiskStore(ArtifactStore):
         serialized_data = serialize(artifact)
 
         # Write atomically (write to temp file, then rename)
-        temp_path = path.with_suffix(path.suffix + ".tmp")
+        temp_path = path.with_name(path.name + f".{threading.get_ident()}.tmp")
         with open(temp_path, "wb") as f:
             f.write(serialized_data)
         temp_path.replace(path)
