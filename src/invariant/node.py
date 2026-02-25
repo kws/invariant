@@ -1,5 +1,7 @@
 """Node and SubGraphNode classes representing vertices in the DAG."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Any
 
@@ -72,7 +74,7 @@ class SubGraphNode:
 
     params: dict[str, Any]
     deps: list[str]
-    graph: dict[str, Node]
+    graph: dict[str, Node | SubGraphNode]
     output: str
 
     def __post_init__(self) -> None:

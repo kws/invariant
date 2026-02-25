@@ -81,3 +81,14 @@ class Polynomial(ICacheable):
     def __repr__(self) -> str:
         """String representation."""
         return f"Polynomial({list(self.coefficients)})"
+
+    def to_json_value(self) -> dict:
+        """Return JSON-serializable dict for graph serialization (IJsonRepresentable)."""
+        return {"coefficients": list(self.coefficients)}
+
+    @classmethod
+    def from_json_value(cls, obj: dict) -> "Polynomial":
+        """Reconstruct from JSON dict (IJsonRepresentable)."""
+        if "coefficients" not in obj:
+            raise ValueError("Polynomial from_json_value requires 'coefficients' key")
+        return cls(obj["coefficients"])

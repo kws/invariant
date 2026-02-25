@@ -2,6 +2,11 @@
 
 from typing import BinaryIO, Protocol, runtime_checkable
 
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
+
 
 @runtime_checkable
 class ICacheable(Protocol):
@@ -47,4 +52,18 @@ class ICacheable(Protocol):
 
         This must be the inverse operation of to_stream.
         """
+        ...
+
+
+@runtime_checkable
+class IJsonRepresentable(Protocol):
+    """Optional: ICacheable types can implement this for human-readable JSON in graph serialization."""
+
+    def to_json_value(self) -> dict:
+        """Return a JSON-serializable dict representation of this object."""
+        ...
+
+    @classmethod
+    def from_json_value(cls, obj: dict) -> Self:
+        """Reconstruct an instance from a JSON dict."""
         ...

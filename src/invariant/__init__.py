@@ -2,6 +2,12 @@
 
 from invariant.executor import Executor
 from invariant.graph import Graph, GraphResolver, GraphVertex
+from invariant.graph_serialization import (
+    dump_graph,
+    dump_graph_to_dict,
+    load_graph,
+    load_graph_from_dict,
+)
 from invariant.node import Node, SubGraphNode
 from invariant.params import cel, ref
 from invariant.registry import OpRegistry
@@ -17,6 +23,10 @@ __all__ = [
     "OpRegistry",
     "SubGraphNode",
     "cel",
+    "dump_graph",
+    "dump_graph_to_dict",
+    "load_graph",
+    "load_graph_from_dict",
     "ref",
     "__version__",
 ]
