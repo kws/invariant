@@ -1,5 +1,7 @@
 """Invariant: A deterministic execution engine for DAGs."""
 
+from importlib.metadata import PackageNotFoundError, version
+
 from invariant.executor import Executor
 from invariant.graph import Graph, GraphResolver, GraphVertex
 from invariant.graph_serialization import (
@@ -12,7 +14,10 @@ from invariant.node import Node, SubGraphNode
 from invariant.params import cel, ref
 from invariant.registry import OpRegistry
 
-__version__ = "0.1.0"
+try:
+    __version__ = version("invariant-core")
+except PackageNotFoundError:
+    __version__ = "0.0.0+unknown"
 
 __all__ = [
     "Executor",
