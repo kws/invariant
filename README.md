@@ -2,6 +2,8 @@
 
 A Python-based deterministic execution engine for directed acyclic graphs (DAGs). Invariant treats every operation as a pure function, providing aggressive caching, deduplication, and bit-for-bit reproducibility.
 
+Invariant was motivated by the need for deterministic graphics pipelines: icons, badges, dynamic UI components, and data visualizations where aggressive caching and bit-for-bit reproducibility matter. Critically, layouts can be described without a final size—size is injected at execution time and everything else is derived via the expression language. The engine itself is domain-agnostic; domain implementations like [Invariant GFX](https://github.com/kws/invariant-gfx) provide graphics ops and plug in via the op registry.
+
 ## Features
 
 - **Aggressive Caching**: Artifacts are reused across runs if inputs match
@@ -9,15 +11,17 @@ A Python-based deterministic execution engine for directed acyclic graphs (DAGs)
 - **Reproducibility**: Bit-for-bit identical outputs across runs
 - **Immutability**: Artifacts are frozen once created
 - **Determinism**: Operations rely only on explicit inputs
+- **Serializable graphs**: Versioned JSON wire format for storage, transmission, and interoperability
 
 ## Installation
 
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd invariant
+# From PyPI
+pip install invariant-core
 
-# Install dependencies
+# From source
+git clone https://github.com/kws/invariant
+cd invariant
 uv sync
 ```
 
@@ -91,6 +95,7 @@ Invariant separates graph definition from execution in two phases:
 | [docs/architecture.md](docs/architecture.md) | System overview, design philosophy, and reference test pipeline |
 | [docs/expressions.md](docs/expressions.md) | **Normative reference** for `ref()`, `cel()`, `${...}` parameter markers and the CEL expression language |
 | [docs/executor.md](docs/executor.md) | **Normative reference** for the two-phase execution model, caching, and artifact storage |
+| [docs/serialization.md](docs/serialization.md) | **Normative reference** for graph JSON wire format (Node, SubGraphNode, ref, cel) |
 | [examples/README.md](examples/README.md) | Runnable examples with walkthroughs, DAG diagrams, and run instructions |
 | [AGENTS.md](AGENTS.md) | Quick-start guide for AI agents working with this codebase |
 
