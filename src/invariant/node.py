@@ -31,11 +31,14 @@ class Node:
         params: Static parameters for this node (dict of parameter name -> value).
                 May contain ref() and cel() markers, and ${...} string interpolation.
         deps: List of node IDs that this node depends on (upstream dependencies).
+        cache: When True (default), the node's result is cached. When False, the op
+               is always executed and the result is never stored (ephemeral node).
     """
 
     op_name: str
     params: dict[str, Any]
     deps: list[str]
+    cache: bool = True
 
     def __post_init__(self) -> None:
         """Validate node configuration."""

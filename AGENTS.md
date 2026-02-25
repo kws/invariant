@@ -41,7 +41,7 @@ Invariant is a Python-based deterministic execution engine for DAGs (directed ac
 
 | Term | Definition | Key Point |
 | :---- | :---- | :---- |
-| **Node** | Vertex in DAG defining *what* to do | Contains op name, params (with ref/cel markers), upstream deps |
+| **Node** | Vertex in DAG defining *what* to do | Contains op name, params (with ref/cel markers), upstream deps. Optional `cache=False` to skip caching (ephemeral nodes). |
 | **Op** | Plain Python function with typed parameters | Pure function: Op(Input) = Output. Executor maps params to args by name |
 | **Manifest** | Fully resolved dictionary of params for a Node | Built from resolved params only (no dep injection) |
 | **Artifact** | Immutable output produced by an Op | Frozen once created, must be cacheable |

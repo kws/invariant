@@ -183,6 +183,18 @@ The executor checks two levels, in order:
 
 All cache lookups go through the configured store, which provides a single, observable cache layer. Stores track cache statistics (hits, misses, puts) via the `store.stats` attribute.
 
+**Ephemeral nodes (cache bypass):** A Node may set `cache=False`. For such nodes, the executor skips cache lookup and never stores the result. Use for nodes whose outputs change frequently and are never reused (e.g., time-dependent values passed as context). The op is invoked every time; `store.exists()` and `store.put()` are not called for that node. Ephemeral nodes are not deduplicated within a run — two identical ephemeral nodes (same op, params, deps) both execute.
+
+```python
+# Ephemeral node: always executes, never caches
+"clock": Node(
+    op_name="stdlib:identity",
+    params={"value": ref("now")},
+    deps=["now"],
+    cache=False,
+)
+```
+
 ### 4.2 Operation Invocation
 
 Ops are plain Python functions. The executor maps manifest keys to function parameters using `inspect.signature()`:
@@ -230,7 +242,7 @@ def add(a: int, b: int) -> int:
 
 After execution (or cache retrieval), the artifact is:
 
-1. Stored in the `ArtifactStore` under `(op_name, digest)` (if cache miss)
+1. Stored in the `ArtifactStore` under `(op_name, digest)` (if cache miss and `node.cache` is True)
 2. Stored in `artifacts_by_node[node_id]` for downstream dependency resolution
 
 ### 4.6 SubGraphNode Execution

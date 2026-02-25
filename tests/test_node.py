@@ -40,3 +40,13 @@ class TestNode:
         """Test that non-list deps raises ValueError."""
         with pytest.raises(ValueError, match="deps must be a list"):
             Node(op_name="test", params={}, deps="not a list")
+
+    def test_cache_default_true(self):
+        """Test that cache defaults to True."""
+        node = Node(op_name="x", params={}, deps=[])
+        assert node.cache is True
+
+    def test_cache_explicit_false(self):
+        """Test that cache can be set to False."""
+        node = Node(op_name="x", params={}, deps=[], cache=False)
+        assert node.cache is False

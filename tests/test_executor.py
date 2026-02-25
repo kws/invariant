@@ -179,3 +179,85 @@ def test_execute_with_upstream_artifacts(registry, store):
     # Result is native str
     assert isinstance(results["b"], str)
     assert results["b"] == "hello_suffix"
+
+
+def test_execute_cache_true_default_uses_store(registry, caching_store):
+    """Test that cache=True (default) uses store lookup and put."""
+    call_count = {"count": 0}
+
+    def counting_op(value: int) -> int:
+        call_count["count"] += 1
+        return value + 1
+
+    registry.register("inc", counting_op)
+
+    graph = {
+        "a": Node(op_name="inc", params={"value": 5}, deps=[]),
+    }
+
+    executor = Executor(registry, caching_store)
+    results1 = executor.execute(graph)
+    assert results1["a"] == 6
+    assert call_count["count"] == 1
+    assert caching_store.stats.misses == 1
+    assert caching_store.stats.puts == 1
+
+    results2 = executor.execute(graph)
+    assert results2["a"] == 6
+    assert call_count["count"] == 1  # Op not called again
+    assert caching_store.stats.hits == 1
+
+
+def test_execute_cache_false_never_stores(registry, caching_store):
+    """Test that cache=False always executes and never stores."""
+    call_count = {"count": 0}
+
+    def counting_op(value: int) -> int:
+        call_count["count"] += 1
+        return value + 1
+
+    registry.register("inc", counting_op)
+
+    graph = {
+        "a": Node(op_name="inc", params={"value": 5}, deps=[], cache=False),
+    }
+
+    executor = Executor(registry, caching_store)
+    results1 = executor.execute(graph)
+    assert results1["a"] == 6
+    assert call_count["count"] == 1
+    assert caching_store.stats.puts == 0  # Never stored
+
+    results2 = executor.execute(graph)
+    assert results2["a"] == 6
+    assert call_count["count"] == 2  # Op called again
+    assert caching_store.stats.puts == 0  # Still never stored
+
+
+def test_execute_ephemeral_feeds_cached_downstream(registry, caching_store):
+    """Test that ephemeral node output feeds correctly into cached downstream."""
+    call_count = {"ephemeral": 0, "consumer": 0}
+
+    def ephemeral_op() -> int:
+        call_count["ephemeral"] += 1
+        return 42
+
+    def consumer_op(x: int) -> int:
+        call_count["consumer"] += 1
+        return x * 2
+
+    registry.register("ephemeral", ephemeral_op)
+    registry.register("consumer", consumer_op)
+
+    graph = {
+        "ep": Node(op_name="ephemeral", params={}, deps=[], cache=False),
+        "out": Node(op_name="consumer", params={"x": ref("ep")}, deps=["ep"]),
+    }
+
+    executor = Executor(registry, caching_store)
+    results = executor.execute(graph)
+    assert results["ep"] == 42
+    assert results["out"] == 84
+    assert call_count["ephemeral"] == 1
+    assert call_count["consumer"] == 1
+    assert caching_store.stats.puts == 1  # Only consumer's result cached

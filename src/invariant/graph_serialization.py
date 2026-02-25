@@ -167,12 +167,15 @@ def _decode_params(obj: dict) -> dict[str, Any]:
 def _encode_vertex(vertex: Node | SubGraphNode) -> dict:
     """Encode a single vertex (Node or SubGraphNode) to JSON object."""
     if isinstance(vertex, Node):
-        return {
+        result: dict = {
             "kind": "node",
             "op_name": vertex.op_name,
             "params": _encode_params(vertex.params),
             "deps": sorted(vertex.deps),
         }
+        if not vertex.cache:
+            result["cache"] = False
+        return result
     # SubGraphNode
     return {
         "kind": "subgraph",
@@ -211,6 +214,7 @@ def _decode_vertex(
             op_name=obj["op_name"].strip(),
             params=_decode_params(obj["params"]),
             deps=list(obj["deps"]),
+            cache=obj.get("cache", True),
         )
     if kind == "subgraph":
         _validate_subgraph(obj, legacy_kind_inference)
@@ -240,6 +244,9 @@ def _validate_node(obj: dict, expected_kind: str | None = None) -> None:
     for i, dep in enumerate(obj["deps"]):
         if not isinstance(dep, str):
             raise ValueError(f"Node deps[{i}] must be string, got {type(dep).__name__}")
+    cache_val = obj.get("cache")
+    if cache_val is not None and not isinstance(cache_val, bool):
+        raise ValueError("Node 'cache' must be boolean when present")
 
 
 def _validate_subgraph(obj: dict, legacy_kind_inference: bool = False) -> None:

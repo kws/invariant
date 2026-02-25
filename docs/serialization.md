@@ -212,6 +212,7 @@ class Node:
     op_name: str
     params: dict[str, Any]
     deps: list[str]
+    cache: bool = True  # When False: ephemeral node, never cached (see executor.md)
 ```
 
 **JSON representation:**
@@ -225,12 +226,15 @@ class Node:
 }
 ```
 
+For ephemeral nodes, include `"cache": false`. When `cache` is true or omitted, it is typically not emitted (compact encoding).
+
 | Field | Type | Required | Description |
 |:--|:--|:--|:--|
 | `kind` | string | Yes | Must be `"node"`. |
 | `op_name` | string | Yes | Non-empty. The registered op identifier. |
 | `params` | object | Yes | Parameter dict. Keys and values use param encoding. |
 | `deps` | array of strings | Yes | List of dependency node IDs. |
+| `cache` | boolean | No | When `false`, the node is ephemeral (never cached). Default `true` when omitted. See [executor.md](executor.md) §4.1. |
 
 ### 4.2 SubGraphNode
 
@@ -296,6 +300,7 @@ Before constructing `Node(...)`:
 | `op_name` | Must be present, a string, and non-empty (after strip). |
 | `params` | Must be present and an object. |
 | `deps` | Must be present and an array. Every element must be a string. |
+| `cache` | If present, must be a boolean. |
 
 ### 5.3 SubGraphNode Validation
 
@@ -437,7 +442,11 @@ When introducing a new schema version:
 2. Document migration path from previous version.
 3. Loaders may support multiple versions; document which are supported.
 
-### 9.2 Optional: Legacy Kind Inference
+### 9.2 Optional Node Fields
+
+The `cache` field on Node is optional. Documents without it decode as `cache=true`. When writing, implementations typically omit `cache` when true to keep payloads compact.
+
+### 9.3 Optional: Legacy Kind Inference
 
 Implementations may optionally accept vertices that omit `kind` for backwards compatibility with pre-specification payloads:
 

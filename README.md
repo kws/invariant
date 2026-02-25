@@ -9,6 +9,7 @@ Invariant was motivated by the need for deterministic graphics pipelines: icons,
 - **Aggressive Caching**: Artifacts are reused across runs if inputs match
 - **Deduplication**: Identical operations execute only once
 - **Reproducibility**: Bit-for-bit identical outputs across runs
+- **Ephemeral nodes**: Set `cache=False` to skip caching for frequently-changing outputs (e.g., time-dependent values)
 - **Immutability**: Artifacts are frozen once created
 - **Determinism**: Operations rely only on explicit inputs
 - **Serializable graphs**: Versioned JSON wire format for storage, transmission, and interoperability

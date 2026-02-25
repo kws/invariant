@@ -48,7 +48,7 @@ def _graphs_equal(g1: dict, g2: dict) -> bool:
         if type(v1) is not type(v2):
             return False
         if isinstance(v1, Node):
-            if v1.op_name != v2.op_name or v1.deps != v2.deps:
+            if v1.op_name != v2.op_name or v1.deps != v2.deps or v1.cache != v2.cache:
                 return False
             if v1.params != v2.params:
                 return False
@@ -102,6 +102,45 @@ class TestRoundTrip:
         s = dump_graph(graph)
         g2 = load_graph(s)
         assert _graphs_equal(graph, g2)
+
+    def test_cache_false_round_trip(self):
+        """Graph with cache=False round-trips."""
+        graph = {
+            "ephemeral": Node(
+                op_name="op",
+                params={"value": 1},
+                deps=[],
+                cache=False,
+            ),
+        }
+        s = dump_graph(graph)
+        g2 = load_graph(s)
+        assert _graphs_equal(graph, g2)
+        assert g2["ephemeral"].cache is False
+
+    def test_cache_backwards_compatibility(self):
+        """JSON without cache key decodes to cache=True."""
+        doc = {
+            "format": "invariant-graph",
+            "version": 1,
+            "graph": {
+                "a": {
+                    "kind": "node",
+                    "op_name": "op",
+                    "params": {},
+                    "deps": [],
+                },
+            },
+        }
+        g = load_graph_from_dict(doc)
+        assert g["a"].cache is True
+
+    def test_cache_omit_when_true(self):
+        """Encoded Node with cache=True does not include cache in output."""
+        graph = {"a": Node(op_name="op", params={}, deps=[])}
+        d = dump_graph_to_dict(graph)
+        node_obj = d["graph"]["a"]
+        assert "cache" not in node_obj
 
 
 class TestParamEncoding:
@@ -255,6 +294,24 @@ class TestValidation:
             "graph": {"a": {"kind": "node", "params": {}, "deps": []}},
         }
         with pytest.raises(ValueError, match="op_name"):
+            load_graph_from_dict(doc)
+
+    def test_node_cache_must_be_bool(self):
+        """Reject node with non-boolean cache."""
+        doc = {
+            "format": "invariant-graph",
+            "version": 1,
+            "graph": {
+                "a": {
+                    "kind": "node",
+                    "op_name": "op",
+                    "params": {},
+                    "deps": [],
+                    "cache": "yes",
+                },
+            },
+        }
+        with pytest.raises(ValueError, match="cache.*boolean"):
             load_graph_from_dict(doc)
 
     def test_subgraph_output_not_in_graph(self):

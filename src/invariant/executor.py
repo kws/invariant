@@ -91,13 +91,18 @@ class Executor:
             else:
                 # Node: Phase 1 build manifest, Phase 2 cache lookup or execute op
                 manifest = self._build_manifest(node, node_id, graph, artifacts_by_node)
-                digest = hash_manifest(manifest)
-                if self.store.exists(node.op_name, digest):
-                    artifact = self.store.get(node.op_name, digest)
-                else:
+                if not node.cache:
+                    # Ephemeral node: always execute, never cache
                     op = self.registry.get(node.op_name)
                     artifact = self._invoke_op(op, node.op_name, manifest)
-                    self.store.put(node.op_name, digest, artifact)
+                else:
+                    digest = hash_manifest(manifest)
+                    if self.store.exists(node.op_name, digest):
+                        artifact = self.store.get(node.op_name, digest)
+                    else:
+                        op = self.registry.get(node.op_name)
+                        artifact = self._invoke_op(op, node.op_name, manifest)
+                        self.store.put(node.op_name, digest, artifact)
                 artifacts_by_node[node_id] = artifact
 
         return artifacts_by_node
