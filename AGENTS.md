@@ -1,6 +1,6 @@
 # **AGENTS.md: Essential Information for AI Agents**
 
-This document provides must-know information about the Invariant system. For comprehensive details, see [architecture.md](./architecture.md).
+This document provides must-know information about the Invariant system. For comprehensive details, see [docs/architecture.md](./docs/architecture.md).
 
 ## **What is Invariant?**
 
@@ -134,6 +134,6 @@ Node params support three explicit mechanisms. For the complete normative refere
 | [docs/executor.md](./docs/executor.md) | **Normative reference** for the two-phase execution model, caching, type unwrapping, and artifact storage |
 | [docs/subgraphs.md](./docs/subgraphs.md) | SubGraphNode model, execution semantics, and reusable DAG fragments |
 | [docs/serialization.md](./docs/serialization.md) | **Normative reference** for graph JSON wire format (Node, SubGraphNode, ref, cel) |
-| [architecture.md](./architecture.md) | Design philosophy, protocol specifications, and reference test pipeline |
+| [docs/architecture.md](./docs/architecture.md) | Design philosophy, protocol specifications, and reference test pipeline |
 | [examples/README.md](./examples/README.md) | Runnable examples with walkthroughs, DAG diagrams, and run instructions |
 
