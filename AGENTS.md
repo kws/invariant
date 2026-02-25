@@ -111,7 +111,7 @@ For each node in topological order, the executor runs two phases. For the comple
 - **OpRegistry:** Singleton mapping string identifiers → Python callables
 - **GraphResolver:** Parses DAG definition, validates, detects cycles, topologically sorts
 - **Executor:** Runtime engine managing Phase 1 → Phase 2 loop, failures, progress
-- **ArtifactStore:** Storage abstraction (MemoryStore, DiskStore, CloudStore)
+- **ArtifactStore:** Storage abstraction (MemoryStore, NullStore, DiskStore, ChainStore)
 
 ## **Parameter Markers**
 

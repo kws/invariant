@@ -2,7 +2,7 @@
 
 from invariant import Executor, Node, OpRegistry, cel
 from invariant.ops.stdlib import identity
-from invariant.store.memory import MemoryStore
+from invariant.store.null import NullStore
 
 
 def test_context_external_dependencies():
@@ -30,7 +30,7 @@ def test_context_external_dependencies():
         ),
     }
 
-    store = MemoryStore()
+    store = NullStore()
     executor = Executor(registry=registry, store=store)
     results = executor.execute(graph, context=context)
 
@@ -53,7 +53,7 @@ def test_context_missing_dependency():
         ),
     }
 
-    store = MemoryStore()
+    store = NullStore()
     executor = Executor(registry=registry, store=store)
 
     # Should raise ValueError because 'missing' is not in graph or context
@@ -92,7 +92,7 @@ def test_context_with_graph_nodes():
 
     registry.register("stdlib:add", add)
 
-    store = MemoryStore()
+    store = NullStore()
     executor = Executor(registry=registry, store=store)
     results = executor.execute(graph, context=context)
 

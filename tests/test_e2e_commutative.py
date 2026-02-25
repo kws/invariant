@@ -2,7 +2,7 @@
 
 from invariant import Executor, Node, OpRegistry, cel, ref
 from invariant.ops.stdlib import add, identity
-from invariant.store.memory import MemoryStore
+from invariant.store.null import NullStore
 
 
 def test_commutative_canonicalization():
@@ -45,7 +45,7 @@ def test_commutative_canonicalization():
         ),
     }
 
-    store = MemoryStore()
+    store = NullStore()
     executor = Executor(registry=registry, store=store)
     results = executor.execute(graph)
 
@@ -92,7 +92,7 @@ def test_commutative_without_canonicalization():
         ),
     }
 
-    store = MemoryStore()
+    store = NullStore()
     executor = Executor(registry=registry, store=store)
     results = executor.execute(graph)
 
@@ -104,7 +104,7 @@ def test_commutative_without_canonicalization():
     # and thus different cache entries (this is expected behavior)
 
 
-def test_commutative_cache_deduplication():
+def test_commutative_cache_deduplication(caching_store):
     """Test that three nodes with same manifest produce 1 execution + 2 cache hits."""
     registry = OpRegistry()
     registry.clear()  # Clear singleton state
@@ -156,7 +156,7 @@ def test_commutative_cache_deduplication():
         "y": 7,
     }
 
-    store = MemoryStore()
+    store = caching_store
     executor = Executor(registry=registry, store=store)
     results = executor.execute(graph, context=context)
 

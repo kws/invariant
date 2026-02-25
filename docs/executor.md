@@ -50,7 +50,7 @@ from invariant import Executor, Node, OpRegistry, ref
 from invariant.store.memory import MemoryStore
 
 registry = OpRegistry()
-store = MemoryStore()
+store = MemoryStore(cache="unbounded")
 executor = Executor(registry=registry, store=store)
 
 graph = {
@@ -342,19 +342,34 @@ Where:
 
 ### 7.2 MemoryStore
 
-Fast, ephemeral store using an in-memory dict. Suitable for testing.
+Fast, ephemeral store using an in-memory dict or cachetools cache. Suitable for testing.
 
 ```python
 from invariant.store.memory import MemoryStore
-store = MemoryStore()
+store = MemoryStore()                         # LRU, max_size=1000 (default)
+store = MemoryStore(cache="unbounded")        # Plain dict, no eviction
+store = MemoryStore(cache="lru", max_size=500)  # LRU eviction, 500 items
+store = MemoryStore(cache="lfu", max_size=500)  # LFU eviction
+store = MemoryStore(cache=TTLCache(maxsize=500, ttl=300))  # Custom cache
 ```
 
 - Artifacts are stored as raw Python objects (no serialization)
 - Relies on the immutability contract: artifacts are frozen once created
 - Lost when the store instance is garbage collected
 - Supports `clear()` method for test cleanup (also resets statistics)
+- **Default:** `cache="lru"` with `max_size=1000` (safe bounded). Use `cache="unbounded"` for explicit unbounded.
+- **Custom cache:** Pass a `MutableMapping` (e.g. cachetools `TTLCache`). When using a cache instance, `max_size` must not be set.
 
-### 7.3 DiskStore
+### 7.3 NullStore
+
+No-op store that never caches. `exists()` always returns `False`; `put()` is a no-op. Use for execution-correctness tests where caching would obscure behavior, or when you want every run to execute all ops.
+
+```python
+from invariant.store.null import NullStore
+store = NullStore()
+```
+
+### 7.4 DiskStore
 
 Persistent filesystem store under `.invariant/cache/`.
 
@@ -371,7 +386,7 @@ Where `safe_op_name` replaces `:` and `/` with `_`.
 - Writes are atomic (write to `.tmp` file, then rename)
 - Digest must be exactly 64 hex characters
 
-### 7.4 ChainStore
+### 7.5 ChainStore
 
 Composite two-tier cache chaining MemoryStore (L1) and DiskStore (L2).
 
@@ -468,7 +483,7 @@ graph = {
     ),
 }
 
-store = MemoryStore()
+store = MemoryStore(cache="unbounded")
 executor = Executor(registry=registry, store=store)
 results = executor.execute(graph)
 
@@ -499,7 +514,7 @@ graph = {
     ),
 }
 
-store = MemoryStore()
+store = MemoryStore(cache="unbounded")
 executor = Executor(registry=registry, store=store)
 results = executor.execute(graph)
 
@@ -512,7 +527,7 @@ assert results["d"].value == 5
 ### 10.3 Cache Reuse Across Runs
 
 ```python
-store = MemoryStore()
+store = MemoryStore(cache="unbounded")
 executor = Executor(registry=registry, store=store)
 
 # First run: all ops execute, artifacts stored
@@ -604,13 +619,15 @@ The following items are **disagreements or ambiguities** between documentation a
 
 ---
 
-### F-10: `None` Wrapping Not Implemented
+### F-10: `None` Wrapping Not Implemented [RESOLVED]
 
-**Documentation:** `is_cacheable(None)` returns `True`. `hash_value(None)` returns a valid hash.
+**Original issue:** Documentation said `is_cacheable(None)` returns `True` and `hash_value(None)` returns a valid hash. Implementation was thought to have `to_cacheable(None)` raising `NotImplementedError`, implying ops could not return `None` and context could not contain `None`.
 
-**Implementation:** `to_cacheable(None)` raises `NotImplementedError`. Ops cannot return `None`, and context values cannot be `None`.
+**Implementation:** No `to_cacheable()` function exists (consistent with F-07, F-08, F-09). `is_cacheable(None)` returns `True`; `hash_value(None)` returns a valid hash. Native types including `None` are stored directly without wrapping. Ops may return `None` and context may contain `None` — both are validated by `is_cacheable()` and pass.
 
-**Source:** `cacheable.py` `to_cacheable()` lines 151–155.
+**Resolution:** F-10 was based on a non-existent `to_cacheable()` function. The implementation supports `None` throughout. Marked resolved.
+
+**Source:** `cacheable.py` — only `is_cacheable()` exists; `None` is explicitly allowed (lines 52–54).
 
 ---
 

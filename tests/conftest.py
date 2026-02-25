@@ -4,6 +4,7 @@ import pytest
 
 from invariant.registry import OpRegistry
 from invariant.store.memory import MemoryStore
+from invariant.store.null import NullStore
 
 
 @pytest.fixture
@@ -16,5 +17,11 @@ def registry():
 
 @pytest.fixture
 def store():
-    """Create a fresh MemoryStore instance."""
-    return MemoryStore()
+    """Create a NullStore for execution correctness tests (no caching)."""
+    return NullStore()
+
+
+@pytest.fixture
+def caching_store():
+    """Create an unbounded MemoryStore for tests that verify cache behavior."""
+    return MemoryStore(cache="unbounded")

@@ -30,7 +30,7 @@ class ChainStore(ArtifactStore):
             l2: DiskStore instance for L2 cache. If None, creates a new one.
         """
         super().__init__()
-        self.l1 = l1 or MemoryStore()
+        self.l1 = l1 or MemoryStore(cache="lru")
         self.l2 = l2 or DiskStore()
 
     def exists(self, op_name: str, digest: str) -> bool:

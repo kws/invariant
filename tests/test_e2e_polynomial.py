@@ -2,7 +2,7 @@
 
 from invariant import Executor, Node, OpRegistry, ref
 from invariant.ops import poly
-from invariant.store.memory import MemoryStore
+from invariant.store.null import NullStore
 
 
 def test_distributive_law_pipeline():
@@ -86,7 +86,7 @@ def test_distributive_law_pipeline():
         ),
     }
 
-    store = MemoryStore()
+    store = NullStore()
     executor = Executor(registry=registry, store=store)
     results = executor.execute(graph)
 
@@ -126,7 +126,7 @@ def test_cache_reuse():
         ),
     }
 
-    store = MemoryStore()
+    store = NullStore()
     executor = Executor(registry=registry, store=store)
 
     # First run - all ops execute

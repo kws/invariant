@@ -21,7 +21,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "cel-python (>=0.5.0,<0.6.0)"
+    "cachetools>=5.3.0",
+    "cel-python (>=0.5.0,<0.6.0)",
 ]
 
 [project.urls]
@@ -42,6 +43,7 @@ packages = ["src/invariant"]
 
 [dependency-groups]
 dev = [
+    "cachetools>=5.3.0",
     "ruff>=0.15.1",
     "pytest>=9.0.2",
     "pytest-cov>=6.0.0",

@@ -140,9 +140,10 @@ The runtime engine.
 The storage abstraction.
 
 * *Implementations:*  
-  * MemoryStore: fast, ephemeral (testing).  
-  * DiskStore: local filesystem (.invariant/cache/).  
-  * ChainStore: composite two-tier cache chaining MemoryStore (L1) and DiskStore (L2), with automatic promotion from L2 to L1 on cache hits.  
+  * MemoryStore: fast, ephemeral (testing). Default LRU with max_size=1000; use cache="unbounded" for no eviction.
+  * NullStore: no-op store (exists always False, put no-op). Use for execution-correctness tests.
+  * DiskStore: local filesystem (.invariant/cache/).
+  * ChainStore: composite two-tier cache chaining MemoryStore (L1) and DiskStore (L2), with automatic promotion from L2 to L1 on cache hits.
   * CloudStore: planned for S3/GCS buckets for shared team caches (not yet implemented).
 
 ## **6\. Examples**

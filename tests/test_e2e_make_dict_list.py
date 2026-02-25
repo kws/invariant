@@ -2,7 +2,7 @@
 
 from invariant import Executor, Node, OpRegistry, cel, ref
 from invariant.ops.stdlib import identity, make_dict, make_list
-from invariant.store.memory import MemoryStore
+from invariant.store.null import NullStore
 
 
 def test_make_dict_with_ref_and_cel():
@@ -29,7 +29,7 @@ def test_make_dict_with_ref_and_cel():
         ),
     }
 
-    store = MemoryStore()
+    store = NullStore()
     executor = Executor(registry=registry, store=store)
     results = executor.execute(graph, context=context)
 
@@ -68,7 +68,7 @@ def test_make_dict_with_mixed_literal_ref_cel():
         ),
     }
 
-    store = MemoryStore()
+    store = NullStore()
     executor = Executor(registry=registry, store=store)
     results = executor.execute(graph, context=context)
 
@@ -106,7 +106,7 @@ def test_make_list_with_ref_and_cel():
         ),
     }
 
-    store = MemoryStore()
+    store = NullStore()
     executor = Executor(registry=registry, store=store)
     results = executor.execute(graph, context=context)
 
@@ -115,7 +115,7 @@ def test_make_list_with_ref_and_cel():
     assert results["combined"] == [1, 2, 6]  # [a, b, c+1] = [1, 2, 5+1]
 
 
-def test_make_dict_caching():
+def test_make_dict_caching(caching_store):
     """Test that make_dict caching works correctly."""
     registry = OpRegistry()
     registry.clear()
@@ -147,7 +147,7 @@ def test_make_dict_caching():
         ),
     }
 
-    store = MemoryStore()
+    store = caching_store
     executor = Executor(registry=registry, store=store)
     results = executor.execute(graph, context=context)
 
@@ -161,7 +161,7 @@ def test_make_dict_caching():
     assert store.stats.puts == 1, "Should have 1 put (config1)"
 
 
-def test_make_list_caching():
+def test_make_list_caching(caching_store):
     """Test that make_list caching works correctly."""
     registry = OpRegistry()
     registry.clear()
@@ -186,7 +186,7 @@ def test_make_list_caching():
         ),
     }
 
-    store = MemoryStore()
+    store = caching_store
     executor = Executor(registry=registry, store=store)
     results = executor.execute(graph, context=context)
 
@@ -229,7 +229,7 @@ def test_make_dict_composition():
         ),
     }
 
-    store = MemoryStore()
+    store = NullStore()
     executor = Executor(registry=registry, store=store)
     results = executor.execute(graph)
 
@@ -263,7 +263,7 @@ def test_make_list_composition():
         ),
     }
 
-    store = MemoryStore()
+    store = NullStore()
     executor = Executor(registry=registry, store=store)
     results = executor.execute(graph)
 
